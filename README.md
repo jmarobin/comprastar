@@ -1,17 +1,20 @@
-# Star Compras — Gestão de peças e fornecedores
+# Star Compras — Orçamentos por placa
 
-Aplicação independente em Streamlit para acompanhar comparações de preço por peça, fornecedores, decisões de compra, pedidos, prazos, custo efetivo e indicadores gerenciais.
+Aplicação independente em Streamlit para registrar um caso por placa/sinistro, colar até cinco orçamentos recebidos por WhatsApp, extrair os preços automaticamente, comparar cobertura e valores por peça e acompanhar fornecedor, decisão e entrega.
 
 ## Funcionalidades
 
-- Cadastro de uma comparação por peça necessária em cada sinistro.
-- Registro de várias ofertas por peça, com preço unitário, frete, outros custos, marca, condição, disponibilidade, prazo, garantia e pagamento.
-- Seleção de oferta com justificativa e comparação de custo total.
-- Acompanhamento do pedido, previsão, entrega, valor final, devoluções e problemas.
-- Painel de gastos selecionados, preço histórico de referência, gap de escolha, quantidade de cotações e visão por comprador/categoria.
-- Cadastro de fornecedores e resumo de desempenho.
-- Exportação da base para Excel.
-- Manual operacional incorporado à aplicação.
+- Cadastro de caso por placa, com sinistro, veículo, comprador, região e oficina.
+- Até cinco espaços de orçamento por caso.
+- Colagem do texto como recebido do WhatsApp, com extração do preço no final de cada linha.
+- Soma automática das linhas interpretadas + frete informado.
+- Comparação das descrições normalizadas entre fornecedores e identificação do menor valor por item.
+- Cobertura de peças por orçamento, peças que faltam e destaque de proposta com cobertura completa.
+- Conferência explícita de linhas não interpretadas e linhas tratadas como totais/frete/observações.
+- Cadastro de fornecedores por região, categorias, qualidade percebida, confiabilidade e condições comerciais.
+- Importação de cadastro de fornecedores por Excel/CSV e modelo Excel para preenchimento.
+- Registro do fornecedor selecionado, justificativa, status do pedido, previsão/entrega real e custo final.
+- Dashboard gerencial e exportação de casos, orçamentos, itens interpretados e fornecedores.
 
 ## Rodar no computador
 
@@ -35,20 +38,18 @@ pip install -r requirements.txt
 streamlit run app.py
 ```
 
-O banco `data/star_compras.db` é criado automaticamente na primeira execução. Faça backup periódico desse arquivo.
+O banco `data/star_compras_placas.db` é criado automaticamente na primeira execução. Faça backup periódico desse arquivo.
+
+## Como funciona a extração
+
+O comprador escolhe o fornecedor, cola o texto e salva. Linhas como `FAROL ESQ 480` ou `PORTA DIANTEIRA ESQ 1.790,00` são interpretadas como descrição + valor no fim da linha. Acentos, hífens e abreviações comuns são normalizados para facilitar a conferência. Linhas sem preço final ou com formato inesperado ficam em uma seção de revisão e não entram silenciosamente no subtotal.
+
+A aplicação não usa IA externa para ler as cotações; a extração é feita por regras locais. Formatos novos devem ser testados. O frete deve ser informado no campo próprio. Linhas que começam com TOTAL, SUBTOTAL, FRETE, ENTREGA ou PRAZO são isoladas para evitar dupla contagem, mas devem ser conferidas.
 
 ## Importante antes de usar com dados reais da Star
 
-Esta é uma primeira versão funcional para validação do processo. O banco é SQLite local, sem login, perfis de acesso, trilha de auditoria nem sincronização confiável para vários servidores. Um banco local pode ser compartilhado entre sessões que acessam o mesmo arquivo/servidor, mas isso não substitui uma arquitetura corporativa persistente.
+Esta é uma primeira versão para validar o fluxo. Usa SQLite local, sem login, perfis de acesso, trilha de auditoria ou sincronização multiusuário robusta. Antes de uso corporativo, implementar autenticação, permissões, auditoria, backup e armazenamento corporativo persistente. Não use um banco SQLite local em hospedagem efêmera sem política de persistência.
 
-Antes de publicar com dados reais, configure autenticação, permissões e armazenamento persistente (por exemplo, PostgreSQL gerenciado), além de políticas de backup, proteção e retenção de dados. Em hospedagens com sistema de arquivos efêmero, o banco local pode ser perdido após reinicializações ou novas implantações.
+A comparação por peça depende das descrições fornecidas. O sistema normaliza grafias comuns, mas não garante equivalência técnica entre peças. Confirme lado/posição, código, condição, marca e compatibilidade do veículo. O menor total só é comparável quando as propostas cobrem o mesmo conjunto de peças e condições adequadas.
 
-Os cálculos de economia dependem de cotações corretamente cadastradas, comparação de peças tecnicamente equivalentes e referências históricas confiáveis. O indicador "gap de escolha" representa oportunidade identificada, não economia realizada. O painel não substitui a validação técnica, comercial ou contratual da Star.
-
-## Próximas evoluções recomendadas
-
-1. Importação assistida dos dados do sistema atual.
-2. Login, perfis de coordenador/comprador e trilha de alterações.
-3. Banco de dados corporativo compartilhado e backups automáticos.
-4. Regras de aprovação por valor e exceções justificadas.
-5. Histórico de preço por código/peça com equivalência técnica validada.
+O indicador de gap é uma oportunidade estimada contra a menor proposta com cobertura completa; não deve ser apresentado como economia realizada. O custo final é registrado separadamente.

@@ -1,52 +1,61 @@
-# Manual operacional — Compras Star
+# Manual operacional — Star Compras por placa
 
 ## Objetivo
 
-Padronizar a cotação e a compra de peças de sinistros, garantindo comparabilidade, decisão justificável, acompanhamento de entrega e dados que apoiem negociações com fornecedores.
+Reduzir o trabalho manual dos compradores: em vez de digitar cada peça e cada preço, registrar um caso por placa/sinistro, colar até cinco orçamentos recebidos e deixar a plataforma extrair e comparar as linhas.
 
-## 1. Abrir a demanda
+## 1. Abrir o caso
 
-Registre uma comparação individual para cada peça necessária. Preencha sinistro, veículo e ano/modelo, comprador, região, oficina de destino, categoria, quantidade e condição exigida. Registre preço histórico somente quando houver referência confiável para uma peça equivalente.
+Na tela **Casos por placa**, cadastre placa, número do sinistro, veículo/ano, comprador, região e oficina. Um veículo pode voltar à operação em outro sinistro; nesse caso, abra outro caso para não misturar orçamentos de eventos diferentes.
 
-## 2. Solicitar e registrar cotações
+## 2. Registrar até cinco cotações
 
-Sempre que viável, obtenha pelo menos três ofertas comparáveis. Cadastre uma oferta por fornecedor, preenchendo preço unitário, marca, condição, frete, outros custos, disponibilidade, prazo, garantia, validade e pagamento. Quando não for possível obter a quantidade de cotações esperada, registre a razão (urgência, região sem cobertura, fornecedor exclusivo ou indisponibilidade).
+Em cada espaço, escolha um fornecedor do cadastro ou digite seu nome, cole a mensagem de WhatsApp como foi recebida e informe frete, condição predominante, prazo e garantia quando disponíveis. Depois, salve o orçamento. Um caso aceita até cinco propostas (opções 1–5).
 
-## 3. Conferir equivalência
+Exemplo de texto aceito:
 
-Antes de comparar, confira código/referência, descrição, lado/posição, veículo compatível, marca e condição. Original, paralela, usada e recondicionada não devem ser tratadas automaticamente como equivalentes. A aplicação auxilia a análise, mas não valida tecnicamente a peça.
+```text
+RETROVISOR ESO ELETRICO 590
+FAROL ESQ 480
+FRISO PORTA DIANTEIRA ESQ 150
+PARABARRO ESQ 150
+PARALAMA ESQ 330
+PORTA DIANTEIRA ESQ 1790
+```
 
-## 4. Comparar custo total
+O sistema interpreta o preço no final de cada linha. Aceita formatos como `590`, `1.790`, `1.790,00` e `R$ 1.790,00`. Frete deve ser lançado no campo de frete, não repetido no texto das peças.
 
-Considere quantidade × preço unitário + frete + outros custos cadastrados. Pese também prazo, disponibilidade, garantia e pagamento. O menor total é uma referência importante, não uma regra cega: uma escolha mais cara precisa ter justificativa registrada.
+## 3. Conferir a extração
 
-## 5. Registrar a escolha
+A plataforma exibe linhas interpretadas, subtotal e linhas para revisão. Itens sem um preço final legível não são incluídos no total e aparecem para conferência. Linhas com termos como TOTAL, SUBTOTAL, FRETE, ENTREGA ou PRAZO são isoladas para evitar dupla contagem, e não adicionadas ao subtotal das peças.
 
-Na tela **Escolha da oferta**, selecione uma opção disponível na condição comparada e informe o motivo da decisão. Exemplos de justificativa: menor custo total, entrega compatível com a urgência, garantia superior, qualidade comprovada ou condição comercial negociada.
+A normalização ajuda a agrupar grafias comuns (por exemplo, acentos, hífens, ESQ/ESQUERDO e PARA-LAMA/PARALAMA), mas não comprova que peças com nomes semelhantes sejam tecnicamente idênticas. Confira posição/lado, marca, código, condição e compatibilidade. Se dois fornecedores usarem descrições muito diferentes para a mesma peça, o comprador deve revisar a matriz; o sistema não deve ser tratado como validador técnico.
 
-## 6. Acompanhar pedido e entrega
+## 4. Como interpretar a comparação
 
-Na tela **Pedidos e entregas**, atualize status, data do pedido, previsão e data real de entrega. Registre o preço final unitário efetivamente pago após a compra, além de atrasos, devoluções, incompatibilidades e problemas.
+- **Total do orçamento:** soma das linhas interpretadas + frete informado.
+- **Cobertura:** proporção de descrições de peças encontradas naquela proposta frente ao total de descrições identificadas em todas as cotações daquele caso.
+- **Peças faltantes:** descrições identificadas em outras propostas que não apareceram naquela proposta.
+- **Menor preço por peça:** menor valor registrado entre linhas com a mesma descrição normalizada.
+- **Menor total com cobertura completa:** destaque apenas quando existe proposta que cobre todas as descrições identificadas. Se nenhuma cobre, não compare só o total bruto; revise os itens faltantes.
+- **Gap de escolha:** diferença entre a proposta selecionada e a menor proposta que cobre o mesmo conjunto de peças. É oportunidade estimada, não economia realizada.
 
-## 7. Rotina do coordenador
+## 5. Escolha e acompanhamento
 
-- **Diariamente:** revisar cotações pendentes, compras sem alternativas suficientes, pedidos atrasados e ocorrências.
-- **Semanalmente:** analisar gap de escolha, número de cotações comparáveis, fornecedores escolhidos, prazos e devoluções.
-- **Mensalmente:** comparar preços unitários de peças equivalentes, gasto por categoria/região, custo por sinistro e economia de preço realizada versus referência histórica.
+Registre a opção escolhida e o motivo (menor total com cobertura completa, prazo, disponibilidade, qualidade, garantia ou condição comercial). Depois atualize status, data do pedido, data prevista, data real e custo efetivamente pago. Registre problemas de entrega ou qualidade nas ocorrências.
 
-## Como interpretar os indicadores
+## 6. Cadastro de fornecedores
 
-- **Compras selecionadas:** soma dos valores cotados das ofertas escolhidas. Pode diferir do custo efetivamente pago.
-- **Economia realizada vs. referência:** diferença entre o preço unitário histórico de referência e o preço unitário final, multiplicada pela quantidade. Só é calculada para itens marcados como entregues e com os dois preços preenchidos. Essa métrica exclui frete e outros custos.
-- **Gap de escolha:** diferença positiva entre a oferta escolhida e a menor oferta disponível comparável registrada, incluindo frete/outros custos cadastrados. É uma oportunidade identificada, não economia realizada.
-- **Ticket médio por sinistro:** muda conforme gravidade, veículo e quantidade de peças. Compare períodos e grupos semelhantes.
-- **Taxa de escolha do fornecedor:** representa a frequência com que suas ofertas foram selecionadas, mas não comprova sozinha que tenha o melhor preço ou qualidade.
-- **Prazo real e taxa de atraso:** só são confiáveis quando as datas do pedido, previsão e entrega são preenchidas corretamente.
+Na tela **Fornecedores**, mantenha regiões atendidas, categorias, qualidade percebida (1–5), confiabilidade (1–5), condições comerciais, contato e notas objetivas. A pontuação é uma avaliação interna da equipe; não é garantia de qualidade.
 
-## Controles internos a definir com a gerência
+Também é possível preencher `modelo_fornecedores_star.xlsx` e importar o arquivo pela própria plataforma. Fornecedores com o mesmo nome são atualizados; por isso, use nomenclatura consistente.
 
-A gerência deve estabelecer limites de valor, alçadas de aprovação, política para pelo menos três cotações, tratamento de urgências, critérios de peças e garantias aceitáveis, e quem pode consultar/exportar os dados.
+## 7. Rotina de coordenação
 
-## Proteção de dados
+- **Diariamente:** revisar casos com poucas propostas, linhas não interpretadas e entrega em atraso.
+- **Semanalmente:** analisar diferenças de preço por peça, cobertura regional, motivos de escolha e ocorrências por fornecedor.
+- **Mensalmente:** comparar custo por caso em perfis semelhantes, evolução de preços e condições negociadas. Não atribua toda mudança no ticket médio ao comprador: gravidade, veículo e quantidade de peças podem variar.
 
-Evite incluir dados pessoais ou documentos do associado quando não forem necessários para acompanhar a compra. A versão inicial não tem login nem controle de permissões e deve ser validada antes do uso compartilhado com dados reais.
+## Segurança e limitações
+
+A versão inicial usa banco SQLite local e não tem login, controle de permissões nem trilha de alterações. Antes do uso compartilhado com dados reais, implante autenticação, perfis, auditoria e backup corporativo. Evite incluir dados pessoais de associados que não sejam necessários para a compra.
