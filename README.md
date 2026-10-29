@@ -10,6 +10,9 @@ Aplicação em Streamlit que permite ao comprador digitar uma cidade e visualiza
 - Clique em um marcador para abrir o cartão do parceiro com nome, cidade, telefones e links para ligação/WhatsApp quando o formato do número permitir.
 - Lista de parceiros ordenada por distância aproximada.
 - Área de revisão para cadastros cuja cidade está ambígua ou não foi reconhecida.
+- Filiais da Peças CJ e da Peças Krambeck distribuídas por cada cidade cadastrada, com contatos agrupados por loja.
+- Peças Jota e Peças Jota Joel unificadas em uma única ficha, sem repetir números, preservando a identificação de Joel nos telefones correspondentes.
+- Auto Peças Padova posicionada em Arvoredo/SC.
 
 ## Como rodar no computador
 
@@ -38,13 +41,13 @@ Aplicação em Streamlit que permite ao comprador digitar uma cidade e visualiza
 
 ## Atualizar a lista de parceiros
 
-O arquivo `data/parceiros.csv` é separado por ponto e vírgula (`;`) e está em UTF-8. Para incluir ou alterar um parceiro, atualize esse arquivo e envie a alteração ao GitHub. Preserve as colunas `Nome`, `Números`, `Cidade`, `DDD(s)` e `UF provável pelo DDD`.
+O arquivo `data/parceiros.csv` é separado por ponto e vírgula (`;`) e está em UTF-8. Para incluir ou alterar um parceiro, atualize esse arquivo e envie a alteração ao GitHub. Preserve as colunas `Nome`, `Números`, `Cidade`, `DDD(s)`, `UF provável pelo DDD` e `Contatos`. A coluna opcional `Contatos` usa o formato `Nome do contato: número; Outro contato: número` para diferenciar os telefones de uma mesma loja.
 
-A coluna **Cidade** deve conter preferencialmente um único município por registro. Linhas com vários municípios no mesmo campo e cidades não reconhecidas aparecem na área de revisão e não são posicionadas até serem corrigidas.
+A coluna **Cidade** deve conter preferencialmente um único município por registro. As lojas da Peças CJ e da Peças Krambeck já estão separadas em registros individuais por cidade. Para os demais parceiros, use preferencialmente um município por registro.
 
 ## Observações importantes
 
 - A distância é calculada em linha reta entre o centro aproximado do município pesquisado e o centro aproximado do município parceiro. Não é distância por estrada nem localização exata do estabelecimento.
 - Para cidades que não estão na lista de coordenadas usada pela base, a aplicação tenta consultar o serviço público Nominatim/OpenStreetMap. Essa função depende de conexão à internet.
 - Se o app ficar público, os dados de contato que aparecem nele poderão ser vistos por quem tiver acesso ao app. Revise as configurações de acesso e a autorização para compartilhar os telefones antes de publicar.
-- A planilha de origem contém grafias alternativas e registros com cidades múltiplas. O app trata algumas grafias comuns, mas os casos ambíguos exigem revisão manual.
+- A base foi reorganizada a partir da planilha recebida: CJ e Krambeck aparecem em cada cidade informada; Jota e Jota Joel foram consolidados; Padova foi corrigida para Arvoredo. As coordenadas são aproximadas do centro dos municípios, não o endereço exato das lojas.

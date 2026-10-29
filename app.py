@@ -86,7 +86,7 @@ def load_partners() -> pd.DataFrame:
         raise FileNotFoundError(f"Arquivo de dados não encontrado: {DATA_FILE}")
     df = pd.read_csv(DATA_FILE, sep=";", dtype=str, keep_default_na=False, encoding="utf-8-sig")
     df.columns = [c.strip() for c in df.columns]
-    required = ["Nome", "Números", "Cidade", "DDD(s)", "UF provável pelo DDD"]
+    required = ["Nome", "Números", "Cidade", "DDD(s)", "UF provável pelo DDD", "Contatos"]
     for column in required:
         if column not in df.columns:
             df[column] = ""
@@ -120,7 +120,33 @@ def parse_phones(raw: str, ddd: str = "") -> list[tuple[str, str]]:
     return output
 
 
-def contact_links(raw_phone: str, ddd: str = "") -> str:
+def contact_links(raw_phone: str, ddd: str = "", contacts_raw: str = "") -> str:
+    # Para redes com múltiplos contatos, a base informa "Nome: número; Nome: número".
+    if contacts_raw.strip():
+        links = []
+        for entry in contacts_raw.split(";"):
+            entry = entry.strip()
+            if not entry:
+                continue
+            if ":" in entry:
+                contact_name, raw_number = entry.split(":", 1)
+            else:
+                contact_name, raw_number = "Contato", entry
+            contact_name = html.escape(contact_name.strip())
+            parsed = parse_phones(raw_number.strip(), ddd)
+            if not parsed:
+                links.append(f"<strong>{contact_name}</strong>: {html.escape(raw_number.strip())}")
+                continue
+            for original, international in parsed:
+                number_label = html.escape(original.strip())
+                links.append(
+                    f'<strong>{contact_name}</strong>: '
+                    f'<a href="tel:+{international}">📞 {number_label}</a>'
+                )
+                if international.startswith("55") and len(international) in (12, 13):
+                    links.append(f'<a href="https://wa.me/{international}" target="_blank" rel="noopener">WhatsApp</a>')
+        return "<br>".join(links) if links else f'<span>{html.escape(raw_phone or "Número não informado")}</span>'
+
     phones = parse_phones(raw_phone, ddd)
     if not phones:
         return f'<span>{html.escape(raw_phone or "Número não informado")}</span>'
@@ -160,7 +186,7 @@ def resolve_search_city(query: str) -> tuple[float, float, str] | None:
 def popup_html(row: pd.Series, distance: float) -> str:
     name = html.escape(row["Nome"])
     city = html.escape(row["Cidade"])
-    phones = contact_links(row["Números"], row["DDD(s)"])
+    phones = contact_links(row["Números"], row["DDD(s)"], row.get("Contatos", ""))
     return f"""
     <div style="font-family:Arial,sans-serif;min-width:210px;max-width:290px;color:#102a43">
       <div style="font-weight:700;font-size:15px;margin-bottom:5px">{name}</div>
@@ -175,7 +201,7 @@ def render_contact_card(row: pd.Series, show_distance: bool = True) -> None:
     distance_text = f' · {row["distancia_km"]:.1f} km' if show_distance and pd.notna(row.get("distancia_km")) else ""
     name = html.escape(row["Nome"])
     city = html.escape(row["Cidade"])
-    phones = contact_links(row["Números"], row["DDD(s)"])
+    phones = contact_links(row["Números"], row["DDD(s)"], row.get("Contatos", ""))
     st.markdown(
         f'''<div class="contact-card">
           <div class="contact-name">{name}</div>
@@ -304,9 +330,10 @@ if result:
 
     if not nearby.empty:
         with st.expander("Ver lista completa dos parceiros encontrados"):
-            display = nearby[["Nome", "Cidade", "Números", "distancia_km"]].copy()
+            display = nearby[["Nome", "Cidade", "Números", "Contatos", "distancia_km"]].copy()
+            display["Contato(s)"] = display["Contatos"].where(display["Contatos"].str.strip().ne(""), display["Números"])
             display["distancia_km"] = display["distancia_km"].map(lambda x: f"{x:.1f} km")
-            display = display.rename(columns={"Nome": "Autopeça", "Cidade": "Cidade", "Números": "Contato", "distancia_km": "Distância aproximada"})
+            display = display[["Nome", "Cidade", "Contato(s)", "distancia_km"]].rename(columns={"Nome": "Autopeça", "distancia_km": "Distância aproximada"})
             st.dataframe(display, use_container_width=True, hide_index=True)
 
     st.markdown('<p class="small-note">As distâncias são aproximadas, em linha reta entre os centros dos municípios. Não representam quilometragem rodoviária nem o endereço exato da autopeça.</p>', unsafe_allow_html=True)
@@ -315,7 +342,7 @@ if result:
     if not unmapped.empty:
         with st.expander(f"Cadastros que precisam de revisão de cidade ({len(unmapped)})"):
             st.caption("Esses cadastros não entram no cálculo porque a cidade está escrita como uma lista de municípios ou não foi reconhecida. Corrija o campo Cidade no arquivo data/parceiros.csv para incluí-los no mapa.")
-            cols = ["Nome", "Cidade", "Números", "DDD(s)", "UF provável pelo DDD"]
+            cols = ["Nome", "Cidade", "Números", "DDD(s)", "UF provável pelo DDD", "Contatos"]
             st.dataframe(unmapped[cols].rename(columns={"Nome": "Autopeça", "Números": "Contato", "DDD(s)": "DDD", "UF provável pelo DDD": "UF provável"}), use_container_width=True, hide_index=True)
 else:
     st.markdown("### Como usar")
