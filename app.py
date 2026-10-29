@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import difflib
 import html
+import hashlib
 import math
 import re
 import unicodedata
@@ -56,6 +57,10 @@ st.markdown(
       .contact-heading {{display:flex; align-items:center; flex-wrap:wrap; gap:.5rem; margin-bottom:.25rem;}}
       .premium-badge {{display:inline-flex; align-items:center; gap:.2rem; padding:.15rem .45rem; border-radius:6px; background:linear-gradient(100deg,#ff315e,#ff8617); color:#fff; font-size:.68rem; font-weight:850; letter-spacing:.05em; white-space:nowrap;}}
       .contact-meta {{color:#a9bbcf; font-size:.84rem; margin-bottom:.7rem;}}
+      .rating-summary {{display:flex;align-items:center;gap:.45rem;flex-wrap:wrap;color:#d8e3f1;font-size:.84rem;margin:.15rem 0 .45rem;}}
+      .rating-score {{color:#ff9a26;font-weight:850;font-size:.96rem;}}
+      .rating-stars {{color:#ff9a26;letter-spacing:.04em;}}
+      .rating-count {{color:#92a7bf;font-size:.78rem;}}
       .phone-row {{margin-top:.35rem; font-size:.88rem; line-height:1.65;}}
       .contact-line {{display:flex; align-items:center; flex-wrap:wrap; gap:.45rem; padding:.2rem 0; color:#e2eaf4;}}
       .contact-label {{color:#bfd0e3; font-weight:600; margin-right:.15rem;}}
@@ -106,12 +111,57 @@ def is_premium_supplier(value: object) -> bool:
     )
 
 
+def ensure_premium_column(frame: pd.DataFrame) -> pd.DataFrame:
+    """Garante a coluna de premium também para resultados antigos guardados na sessão.
+
+    O Streamlit pode manter ``search_result`` em session_state entre atualizações.
+    Se o DataFrame foi criado por uma versão antiga do app, ele pode não ter
+    ``is_premium`` mesmo que a base atual já tenha essa coluna.
+    """
+    frame = frame.copy()
+    if "Nome" not in frame.columns:
+        frame["Nome"] = ""
+    if "Categoria" not in frame.columns:
+        frame["Categoria"] = "Regular"
+
+    named_premium = frame["Nome"].map(is_premium_supplier)
+    category_premium = frame["Categoria"].astype(str).str.strip().str.casefold().eq("premium")
+    existing_premium = pd.Series(False, index=frame.index, dtype=bool)
+    if "is_premium" in frame.columns:
+        existing_premium = frame["is_premium"].map(
+            lambda value: value is True or str(value).strip().casefold() in {"true", "1", "yes", "sim", "premium"}
+        )
+    frame["is_premium"] = named_premium | category_premium | existing_premium
+    frame["Categoria"] = frame["is_premium"].map({True: "Premium", False: "Regular"})
+    return frame
+
+
 def canonical_city(value: object) -> str | None:
     city = normalize_text(value)
     # Aceita entradas como "Criciúma - SC" ou "Criciúma, SC".
     city = re.sub(r"(?:\s*,\s*|\s+-\s+|\s+)(AC|AL|AP|AM|BA|CE|DF|ES|GO|MA|MT|MS|MG|PA|PB|PR|PE|PI|RJ|RN|RS|RO|RR|SC|SP|SE|TO)$", "", city).strip()
     city = ALIASES.get(city, city)
     return city if city in CITY_COORDS else None
+
+
+def supplier_key_for_row(row: object) -> str:
+    """Gera uma chave estável para o fornecedor, independente de acentos no nome."""
+    if hasattr(row, "get"):
+        name_value = row.get("Nome", "")
+        city_value = row.get("Cidade", "")
+    else:
+        name_value, city_value = "", ""
+    name_key = re.sub(r"[^A-Z0-9]+", " ", normalize_text(name_value)).strip()
+    city_key = canonical_city(city_value) or re.sub(r"[^A-Z0-9]+", " ", normalize_text(city_value)).strip()
+    # Nome + município identifica a ficha e sobrevive a atualizações de telefone.
+    return hashlib.sha256(f"{name_key}|{city_key}".encode("utf-8")).hexdigest()
+
+
+def ensure_supplier_key_column(frame: pd.DataFrame) -> pd.DataFrame:
+    frame = frame.copy()
+    if "supplier_key" not in frame.columns:
+        frame["supplier_key"] = frame.apply(supplier_key_for_row, axis=1)
+    return frame
 
 
 def haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
@@ -133,13 +183,15 @@ def load_partners() -> pd.DataFrame:
         if column not in df.columns:
             df[column] = ""
         df[column] = df[column].astype(str).str.strip()
+    # Campo opcional com os números que usam WhatsApp, inclusive telefone fixo.
+    # Mantém compatibilidade com CSVs anteriores que ainda não possuem a coluna.
+    if "WhatsApp(s)" not in df.columns:
+        df["WhatsApp(s)"] = ""
+    df["WhatsApp(s)"] = df["WhatsApp(s)"].astype(str).str.strip()
     df = df[df["Nome"].ne("") & df["Números"].ne("")].copy()
-    df["Categoria"] = df.apply(
-        lambda row: "Premium" if row["Categoria"].casefold() == "premium" or is_premium_supplier(row["Nome"]) else "Regular",
-        axis=1,
-    )
-    df["is_premium"] = df["Categoria"].eq("Premium")
+    df = ensure_premium_column(df)
     df["cidade_mapa"] = df["Cidade"].map(canonical_city)
+    df = ensure_supplier_key_column(df)
     return df.reset_index(drop=True)
 
 
@@ -231,12 +283,26 @@ def extract_contact_phones(raw_phone: str, ddd: str = "", contacts_raw: str = ""
     return output
 
 
-def contact_links(raw_phone: str, ddd: str = "", contacts_raw: str = "") -> str:
-    """Exibe apenas link de WhatsApp para celular; outros telefones ficam como texto copiável."""
+def contact_links(
+    raw_phone: str,
+    ddd: str = "",
+    contacts_raw: str = "",
+    whatsapp_raw: str = "",
+) -> str:
+    """Exibe links para celulares e para telefones explicitamente marcados como WhatsApp.
+
+    O formato do número não garante que ele tenha WhatsApp: números fixos também podem
+    estar habilitados. O CSV permite listar esses números na coluna ``WhatsApp(s)``.
+    Celulares continuam usando a regra automática existente como padrão.
+    """
     contacts = extract_contact_phones(raw_phone, ddd, contacts_raw)
     if not contacts:
         return '<span class="copy-number">Número não informado</span>'
 
+    explicit_whatsapp = {
+        international
+        for _, international in parse_phones(whatsapp_raw, ddd)
+    }
     grouped: dict[str, list[str]] = {}
     seen_numbers = set()
     for contact_name, value in contacts:
@@ -249,7 +315,7 @@ def contact_links(raw_phone: str, ddd: str = "", contacts_raw: str = "") -> str:
                 phone_item = f'<span class="copy-number">{html.escape(value)}</span>'
             elif normalized in seen_numbers:
                 continue
-            elif is_whatsapp(normalized):
+            elif normalized in explicit_whatsapp or is_whatsapp(normalized):
                 phone_item = f'<a class="wa-link" style="display:inline-block;padding:4px 8px;border-radius:7px;background:#103c35;color:#c6fff0;text-decoration:none;border:1px solid #24685c;font-weight:700;font-size:12px" href="https://wa.me/{normalized}" target="_blank" rel="noopener noreferrer" aria-label="Abrir WhatsApp de {html.escape(contact_name)}">WhatsApp ↗</a>'
                 seen_numbers.add(normalized)
             else:
@@ -343,7 +409,7 @@ def city_popup_html(city_label: str, city_rows: pd.DataFrame) -> str:
     sorted_rows = city_rows.sort_values(["is_premium", "Nome"], ascending=[False, True], kind="stable")
     for _, row in sorted_rows.iterrows():
         name = html.escape(str(row["Nome"]))
-        phones = contact_links(row["Números"], row["DDD(s)"], row.get("Contatos", ""))
+        phones = contact_links(row["Números"], row["DDD(s)"], row.get("Contatos", ""), row.get("WhatsApp(s)", ""))
         premium_badge = (
             '<span style="display:inline-block;margin-left:6px;padding:2px 5px;border-radius:5px;'
             'background:linear-gradient(100deg,#ff315e,#ff8617);color:#fff;font-size:9px;font-weight:800;letter-spacing:.04em;">★ PREMIUM</span>'
@@ -366,21 +432,229 @@ def city_popup_html(city_label: str, city_rows: pd.DataFrame) -> str:
     )
 
 
-def render_contact_card(row: pd.Series, show_distance: bool = True) -> None:
+def render_contact_card(
+    row: pd.Series,
+    show_distance: bool = True,
+    rating_summary: dict | None = None,
+    supabase_client=None,
+    user=None,
+    own_ratings: dict | None = None,
+    ratings_ready: bool = False,
+    login_available: bool = False,
+) -> None:
     distance_text = f' · {row["distancia_km"]:.1f} km' if show_distance and pd.notna(row.get("distancia_km")) else ""
-    name = html.escape(row["Nome"])
-    city = html.escape(row["Cidade"])
-    phones = contact_links(row["Números"], row["DDD(s)"], row.get("Contatos", ""))
+    name = html.escape(str(row["Nome"]))
+    city = html.escape(str(row["Cidade"]))
+    phones = contact_links(row["Números"], row["DDD(s)"], row.get("Contatos", ""), row.get("WhatsApp(s)", ""))
     premium_badge = '<span class="premium-badge">★ PREMIUM</span>' if bool(row.get("is_premium", False)) else ""
+    supplier_key = str(row.get("supplier_key") or supplier_key_for_row(row))
+    stats = (rating_summary or {}).get(supplier_key)
+    rating_html = ""
+    if ratings_ready and user is not None:
+        if stats and int(stats.get("rating_count", 0)) > 0:
+            avg = float(stats.get("average_rating", 0))
+            count = int(stats.get("rating_count", 0))
+            rounded = max(0, min(5, round(avg)))
+            stars = "★" * rounded + "☆" * (5 - rounded)
+            rating_html = (
+                f'<div class="rating-summary"><span class="rating-score">{avg:.1f}/5</span>'
+                f'<span class="rating-stars">{stars}</span><span class="rating-count">{count} avaliação(ões)</span></div>'
+            )
+        else:
+            rating_html = '<div class="rating-summary"><span class="rating-stars">☆☆☆☆☆</span><span class="rating-count">Ainda sem avaliações</span></div>'
+    elif user is None and login_available:
+        rating_html = '<div class="rating-summary"><span class="rating-count">🔒 Entre para avaliar e ver as notas</span></div>'
+
     st.markdown(
         f'''<div class="contact-card">
           <div class="contact-heading"><div class="contact-name">{name}</div>{premium_badge}</div>
           <div class="contact-meta">📍 {city}{distance_text}</div>
+          {rating_html}
           <div class="phone-row">{phones}</div>
         </div>''',
         unsafe_allow_html=True,
     )
+    if ratings_ready and supabase_client is not None and user is not None:
+        render_rating_widget(row, supabase_client, user, own_ratings or {})
 
+
+def render_rating_widget(row: pd.Series, supabase_client, user, own_ratings: dict) -> None:
+    """Um voto ativo por usuário/fornecedor; editar substitui a nota, não cria outro voto."""
+    supplier_key = str(row.get("supplier_key") or supplier_key_for_row(row))
+    current_rating = own_ratings.get(supplier_key)
+    key_suffix = supplier_key[:16]
+    expander_label = "Editar sua avaliação" if current_rating is not None else "⭐ Avaliar fornecedor"
+    with st.expander(expander_label, expanded=False):
+        if current_rating is not None:
+            st.caption(
+                f"Sua nota atual é {int(current_rating)}/5. Alterar a nota substitui a anterior e continua contando como uma única avaliação."
+            )
+        else:
+            st.caption("Você pode registrar uma única avaliação para este fornecedor. A nota fica vinculada ao seu acesso.")
+        with st.form(key=f"rating_form_{key_suffix}"):
+            selected_rating = st.radio(
+                "Sua nota",
+                options=[1, 2, 3, 4, 5],
+                index=(int(current_rating) - 1) if current_rating is not None else 4,
+                horizontal=True,
+                format_func=lambda value: f"{'★' * value}{'☆' * (5 - value)}  {value}",
+            )
+            saved = st.form_submit_button("Salvar avaliação", use_container_width=True)
+        if saved:
+            try:
+                supabase_client.table("supplier_ratings").upsert(
+                    {
+                        "user_id": str(user.id),
+                        "supplier_key": supplier_key,
+                        "supplier_name": str(row["Nome"])[:200],
+                        "rating": int(selected_rating),
+                    },
+                    on_conflict="user_id,supplier_key",
+                ).execute()
+                st.success("Sua avaliação foi salva. Obrigado!")
+                st.rerun()
+            except Exception:
+                st.error("Não foi possível salvar a avaliação. Confira a conexão com o banco e tente novamente.")
+
+
+def get_supabase_config() -> tuple[str, str]:
+    """Lê apenas a chave pública do Supabase via Streamlit Secrets; nunca usa service_role."""
+    try:
+        config = st.secrets.get("supabase", {})
+        url = str(config.get("url", "")).strip()
+        anon_key = str(config.get("anon_key", "")).strip()
+        return url, anon_key
+    except Exception:
+        return "", ""
+
+
+def clear_login_state() -> None:
+    for state_key in ("sb_access_token", "sb_refresh_token", "sb_user_email", "sb_user_id"):
+        st.session_state.pop(state_key, None)
+
+
+def render_auth_panel():
+    """Login individual de compradores. Os cadastros são criados pelo administrador no Supabase."""
+    url, anon_key = get_supabase_config()
+    if not url or not anon_key:
+        with st.expander("Ativar avaliações compartilhadas", expanded=False):
+            st.write(
+                "Para salvar notas entre usuários, configure um projeto Supabase, execute "
+                "`supabase/schema.sql` e adicione `url` e `anon_key` em Secrets. Veja o README."
+            )
+        return None, None, False, False
+
+    try:
+        from supabase import create_client
+        client = create_client(url, anon_key)
+    except Exception:
+        st.warning("Não foi possível inicializar o serviço de avaliações. Confira a dependência `supabase` e as configurações.")
+        return None, None, True, False
+
+    user = None
+    access_token = st.session_state.get("sb_access_token")
+    refresh_token = st.session_state.get("sb_refresh_token")
+    if access_token and refresh_token:
+        try:
+            client.auth.set_session(access_token, refresh_token)
+            client.auth.get_session()
+            user_response = client.auth.get_user()
+            session = client.auth.get_session()  # persiste tokens caso o SDK tenha renovado a sessão
+            user = getattr(user_response, "user", None)
+            if user is None and session is not None:
+                user = getattr(session, "user", None)
+            if user is None:
+                raise RuntimeError("Sessão não possui usuário válido")
+            if session is not None:
+                st.session_state["sb_access_token"] = session.access_token
+                st.session_state["sb_refresh_token"] = session.refresh_token
+            st.session_state["sb_user_id"] = str(user.id)
+            st.session_state["sb_user_email"] = getattr(user, "email", "") or "Comprador autenticado"
+        except Exception:
+            clear_login_state()
+            user = None
+
+    if user is not None:
+        c1, c2 = st.columns([5, 1])
+        with c1:
+            email_label = html.escape(st.session_state.get("sb_user_email", "comprador"))
+            st.caption(f"Avaliações ativadas · conectado como **{email_label}**")
+        with c2:
+            if st.button("Sair", key="sb_logout", use_container_width=True):
+                try:
+                    client.auth.sign_out()
+                except Exception:
+                    pass
+                clear_login_state()
+                st.rerun()
+        return client, user, True, True
+
+    with st.expander("Entrar para avaliar fornecedores", expanded=False):
+        st.caption("Use o acesso individual fornecido pela administração. Não há cadastro público.")
+        with st.form("supplier_rating_login", clear_on_submit=False):
+            email = st.text_input("E-mail do comprador", autocomplete="email")
+            password = st.text_input("Senha", type="password", autocomplete="current-password")
+            login_submitted = st.form_submit_button("Entrar", use_container_width=True)
+        if login_submitted:
+            try:
+                auth_response = client.auth.sign_in_with_password({"email": email.strip(), "password": password})
+                session = getattr(auth_response, "session", None)
+                user = getattr(auth_response, "user", None)
+                if session is None or user is None:
+                    st.error("Não foi possível iniciar a sessão. Confira o e-mail e a senha.")
+                else:
+                    st.session_state["sb_access_token"] = session.access_token
+                    st.session_state["sb_refresh_token"] = session.refresh_token
+                    st.session_state["sb_user_id"] = str(user.id)
+                    st.session_state["sb_user_email"] = getattr(user, "email", "") or email.strip()
+                    st.rerun()
+            except Exception:
+                st.error("E-mail ou senha inválidos, ou usuário ainda não habilitado. Procure a administração.")
+    return client, None, True, False
+
+
+def load_rating_data(supabase_client, user) -> tuple[dict, dict]:
+    """Carrega médias agregadas e apenas as avaliações do usuário autenticado."""
+    summary_response = (
+        supabase_client.table("supplier_rating_summary")
+        .select("supplier_key,average_rating,rating_count,supplier_name")
+        .execute()
+    )
+    summary = {}
+    for item in (summary_response.data or []):
+        summary[str(item["supplier_key"])] = {
+            "supplier_name": str(item.get("supplier_name") or "Fornecedor"),
+            "average_rating": float(item.get("average_rating") or 0),
+            "rating_count": int(item.get("rating_count") or 0),
+        }
+    mine_response = (
+        supabase_client.table("supplier_ratings")
+        .select("supplier_key,rating")
+        .eq("user_id", str(user.id))
+        .execute()
+    )
+    own_ratings = {
+        str(item["supplier_key"]): int(item["rating"])
+        for item in (mine_response.data or [])
+    }
+    return summary, own_ratings
+
+
+supabase_client, logged_user, supabase_configured, is_logged_in = render_auth_panel()
+rating_summary: dict = {}
+own_ratings: dict = {}
+ratings_ready = False
+if is_logged_in and logged_user is not None and supabase_client is not None:
+    try:
+        rating_summary, own_ratings = load_rating_data(supabase_client, logged_user)
+        ratings_ready = True
+    except Exception:
+        st.warning(
+            "O acesso foi validado, mas o banco de avaliações ainda não está pronto. "
+            "Confirme se o arquivo `supabase/schema.sql` foi executado no projeto Supabase."
+        )
+elif supabase_configured and not is_logged_in:
+    st.caption("Entre com seu acesso de comprador para consultar as notas e avaliar os fornecedores.")
 
 try:
     partners = load_partners()
@@ -431,9 +705,16 @@ if should_search:
                     distances.append(haversine_km(lat, lon, partner_lat, partner_lon))
                 mapped["distancia_km"] = distances
                 nearby = mapped[mapped["distancia_km"] <= radius].copy()
+                nearby = ensure_supplier_key_column(nearby)
+                nearby["media_avaliacao"] = nearby["supplier_key"].map(
+                    lambda key: rating_summary.get(str(key), {}).get("average_rating", 0.0)
+                )
+                nearby["total_avaliacoes"] = nearby["supplier_key"].map(
+                    lambda key: rating_summary.get(str(key), {}).get("rating_count", 0)
+                )
                 nearby = nearby.sort_values(
-                    ["is_premium", "distancia_km", "Nome"],
-                    ascending=[False, True, True],
+                    ["is_premium", "media_avaliacao", "distancia_km", "Nome"],
+                    ascending=[False, False, True, True],
                     kind="stable",
                 ).reset_index(drop=True)
                 canonical_key = resolve_city_prefix(city_query) or normalize_text(display_name)
@@ -455,7 +736,28 @@ result = st.session_state.get("search_result")
 if result:
     # O resultado usa o raio selecionado na última busca até que uma nova busca seja enviada.
     lat, lon = result["lat"], result["lon"]
-    nearby = result["nearby"]
+    # Corrige resultados antigos mantidos na sessão depois de um deploy.
+    # Versões anteriores podiam guardar um DataFrame sem a coluna is_premium,
+    # causando KeyError ao construir os marcadores do mapa.
+    nearby = ensure_premium_column(result["nearby"])
+    nearby = ensure_supplier_key_column(nearby)
+    if "cidade_mapa" not in nearby.columns and "Cidade" in nearby.columns:
+        nearby["cidade_mapa"] = nearby["Cidade"].map(canonical_city)
+    if "distancia_km" not in nearby.columns:
+        nearby["distancia_km"] = 0.0
+    nearby["media_avaliacao"] = nearby["supplier_key"].map(
+        lambda key: rating_summary.get(str(key), {}).get("average_rating", 0.0)
+    )
+    nearby["total_avaliacoes"] = nearby["supplier_key"].map(
+        lambda key: rating_summary.get(str(key), {}).get("rating_count", 0)
+    )
+    nearby = nearby.sort_values(
+        ["is_premium", "media_avaliacao", "distancia_km", "Nome"],
+        ascending=[False, False, True, True],
+        kind="stable",
+    ).reset_index(drop=True)
+    result["nearby"] = nearby
+    st.session_state["search_result"] = result
     display_name = result["display_name"]
     radius_used = result["radius"]
     reference_key = result.get("city_key")
@@ -471,6 +773,36 @@ if result:
         with col:
             st.markdown(f'<div class="metric-box"><div class="metric-label">{label}</div><div class="metric-value">{value}</div></div>', unsafe_allow_html=True)
     st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
+
+    if ratings_ready:
+        evaluated = [
+            (key, value) for key, value in rating_summary.items()
+            if int(value.get("rating_count", 0)) > 0
+        ]
+        evaluated.sort(key=lambda item: (-float(item[1].get("average_rating", 0)), -int(item[1].get("rating_count", 0))))
+        with st.expander("🏆 Ranking dos fornecedores mais bem avaliados", expanded=False):
+            if not evaluated:
+                st.info("Ainda não há avaliações registradas. Seja o primeiro a avaliar um fornecedor.")
+            else:
+                partner_index = partners.set_index("supplier_key", drop=False)
+                for place, (key, stats) in enumerate(evaluated[:10], start=1):
+                    supplier_name = str(stats.get("supplier_name", "Fornecedor"))
+                    supplier_city = ""
+                    is_premium = False
+                    if key in partner_index.index:
+                        partner_row = partner_index.loc[key]
+                        if isinstance(partner_row, pd.DataFrame):
+                            partner_row = partner_row.iloc[0]
+                        supplier_name = str(partner_row.get("Nome", supplier_name))
+                        supplier_city = str(partner_row.get("Cidade", ""))
+                        is_premium = bool(partner_row.get("is_premium", False))
+                    premium_text = " · ★ PREMIUM" if is_premium else ""
+                    st.markdown(
+                        f"**{place}. {html.escape(supplier_name)}**{premium_text}  "
+                        f"\n\n<small>{html.escape(supplier_city)} · ⭐ {float(stats['average_rating']):.1f}/5 "
+                        f"· {int(stats['rating_count'])} avaliação(ões)</small>",
+                        unsafe_allow_html=True,
+                    )
 
     m = folium.Map(location=[lat, lon], zoom_start=9, control_scale=True, tiles=None, prefer_canvas=True)
     # Mapa de ruas claro, sem inversão de cores nem chave de API.
@@ -548,11 +880,27 @@ if result:
             st.info("Nenhuma autopeça com cidade mapeada foi encontrada nesse raio. Tente ampliar o raio ou pesquisar outra cidade.")
         else:
             for _, row in nearby.head(8).iterrows():
-                render_contact_card(row)
+                render_contact_card(
+                    row,
+                    rating_summary=rating_summary,
+                    supabase_client=supabase_client,
+                    user=logged_user,
+                    own_ratings=own_ratings,
+                    ratings_ready=ratings_ready,
+                    login_available=supabase_configured,
+                )
             if len(nearby) > 8:
                 with st.expander(f"Ver os outros {len(nearby) - 8} parceiros encontrados"):
                     for _, row in nearby.iloc[8:].iterrows():
-                        render_contact_card(row)
+                        render_contact_card(
+                            row,
+                            rating_summary=rating_summary,
+                            supabase_client=supabase_client,
+                            user=logged_user,
+                            own_ratings=own_ratings,
+                            ratings_ready=ratings_ready,
+                            login_available=supabase_configured,
+                        )
 
     if not nearby.empty:
         with st.expander("Ver lista completa dos parceiros encontrados"):
@@ -577,6 +925,7 @@ with st.expander("Sobre a base de contatos"):
     st.write(f"A base carregada contém **{len(partners)} fichas de parceiros**. Somente registros com cidade reconhecida entram no mapa. Alguns cadastros podem precisar de correção manual antes de aparecer na busca.")
     st.write("Os marcadores representam o centro aproximado do município cadastrado; não indicam o endereço exato da empresa.")
     st.write("A lista de contatos fica no arquivo `data/parceiros.csv`, que pode ser atualizado no GitHub quando houver novos parceiros ou mudanças nos telefones.")
+    st.write("Para telefone fixo que também tenha WhatsApp, preencha a coluna `WhatsApp(s)` com o número (por exemplo, +554732814151). O app exibirá o atalho do WhatsApp mesmo que o número pareça fixo; deixe a célula vazia para manter a detecção automática atual dos celulares.")
 
 
 st.markdown('<div class="app-footer">powered by <strong>Marobin Group</strong></div>', unsafe_allow_html=True)

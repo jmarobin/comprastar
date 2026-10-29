@@ -3,3 +3,4 @@ pandas>=2.2,<3.0
 folium>=0.18,<0.21
 streamlit-folium>=0.25,<1.0
 geopy>=2.4,<3.0
+supabase>=2.15,<3.0
