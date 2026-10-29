@@ -313,6 +313,55 @@ def apply_premium_overrides(frame: pd.DataFrame, overrides: dict[str, bool]) -> 
     return frame
 
 
+def load_supplier_profile_overrides(supabase_client) -> tuple[dict[str, dict], bool, str | None]:
+    """Carrega edições persistentes de fichas de fornecedores do Supabase."""
+    try:
+        response = (
+            supabase_client.table("supplier_profile_overrides")
+            .select("supplier_key,name,phone_numbers,city,ddds,state,contacts,whatsapp_numbers,latitude,longitude")
+            .execute()
+        )
+        overrides = {}
+        for item in (response.data or []):
+            key = str(item.get("supplier_key") or "").strip()
+            if key:
+                overrides[key] = dict(item)
+        return overrides, True, None
+    except Exception as exc:
+        return {}, False, str(exc)
+
+
+def apply_supplier_profile_overrides(frame: pd.DataFrame, overrides: dict[str, dict]) -> pd.DataFrame:
+    """Aplica ao CSV e aos parceiros do diretório as edições persistidas pelos gestores."""
+    frame = ensure_supplier_key_column(frame).copy()
+    column_map = {
+        "Nome": "name",
+        "Números": "phone_numbers",
+        "Cidade": "city",
+        "DDD(s)": "ddds",
+        "UF provável pelo DDD": "state",
+        "Contatos": "contacts",
+        "WhatsApp(s)": "whatsapp_numbers",
+    }
+    for index, row in frame.iterrows():
+        key = str(row.get("supplier_key") or "").strip()
+        item = overrides.get(key)
+        if not item:
+            continue
+        for column, field in column_map.items():
+            if field in item and item[field] is not None:
+                frame.at[index, column] = str(item[field]).strip()
+        city = str(item.get("city") or frame.at[index, "Cidade"]).strip()
+        latitude = item.get("latitude")
+        longitude = item.get("longitude")
+        if city and latitude is not None and longitude is not None:
+            city_key = canonical_city(city) or normalize_text(city)
+            if city_key:
+                CITY_COORDS[city_key] = (float(latitude), float(longitude))
+                CITY_LABELS[city_key] = city
+    return frame
+
+
 def normalize_phone(raw: str, ddd: str = "") -> str | None:
     """Normaliza um telefone brasileiro para E.164 e corrige celulares antigos de 8 dígitos."""
     digits = re.sub(r"\D", "", raw or "")
@@ -847,195 +896,310 @@ def render_manager_supplier_form(
     directory_ready: bool,
     premium_overrides_ready: bool,
     premium_overrides: dict[str, bool],
+    profile_overrides_ready: bool,
 ) -> None:
-    """Área de gestão exclusiva para inserir parceiros e decidir quem é premium."""
+    """Área única, exclusiva para gestores, para adicionar ou editar parceiros."""
     email = (getattr(user, "email", "") or "").strip().casefold()
     if email not in MANAGER_EMAILS:
         return
 
     with st.expander("🛠️ Gestão de parceiros", expanded=False):
-        st.caption("Área exclusiva para Maiki e João Marobin. Cadastros e classificações são salvos no Supabase e compartilhados com a equipe.")
-        add_tab, premium_tab = st.tabs(["➕ Adicionar parceiro", "⭐ Gerenciar premium"])
+        st.caption("Área exclusiva para gestores. Cadastros e classificações são salvos no Supabase e compartilhados com a equipe.")
 
-        with add_tab:
-            if not directory_ready:
+        mode = st.radio(
+            "O que deseja fazer?",
+            options=["Adicionar parceiro", "Editar parceiro existente"],
+            horizontal=True,
+            key="manager_supplier_action_mode",
+        )
+
+        indexed: dict[str, dict] = {}
+        if not partners.empty:
+            sorted_partners = partners.sort_values(["Nome", "Cidade"], kind="stable")
+            for _, row in sorted_partners.iterrows():
+                key = str(row.get("supplier_key") or supplier_key_for_row(row))
+                label = f"{str(row.get('Nome', 'Fornecedor'))} — {str(row.get('Cidade', 'Cidade não informada'))}"
+                indexed.setdefault(key, {"label": label, "row": row})
+
+        selected_key = None
+        selected_row = None
+        if mode == "Editar parceiro existente":
+            if not profile_overrides_ready:
                 st.error(
-                    "O cadastro permanente ainda não está habilitado. No Supabase, abra SQL Editor e execute "
-                    "o arquivo `supabase/add_supplier_directory.sql` desta versão. Depois atualize esta página."
+                    "A edição persistente ainda não está habilitada. No Supabase, abra SQL Editor e execute "
+                    "`supabase/add_supplier_profile_editing.sql` desta versão."
                 )
-            else:
-                with st.form("manager_add_supplier_form", clear_on_submit=True):
-                    supplier_name = st.text_input("Nome do fornecedor", placeholder="Ex.: Auto Peças Exemplo")
-                    city_text = st.text_input("Cidade", placeholder="Digite o município, por exemplo Tubarão")
-                    uf_value = st.selectbox("Estado", ["SC", "PR", "RS", "SP", "MG", "RJ", "GO", "MS", "MT", "BA", "ES", "DF", "AC", "AL", "AP", "AM", "CE", "MA", "PA", "PB", "PE", "PI", "RN", "RO", "RR", "SE", "TO"], index=0)
-                    ddd = st.text_input("DDD padrão (opcional)", placeholder="Ex.: 48", max_chars=3)
-                    category = st.selectbox("Classificação inicial", ["Regular", "Premium"], index=0, help="Somente os gestores podem alterar essa classificação depois.")
-                    st.markdown("**Contatos e telefones**")
-                    st.caption("Informe um telefone por linha. Marque WhatsApp também para telefones fixos que tenham WhatsApp.")
-                    contact_inputs = []
-                    for idx in range(1, 5):
-                        name_col, phone_col, wa_col = st.columns([1.0, 1.45, 0.85], gap="small")
-                        with name_col:
-                            contact_name = st.text_input("Nome do contato" if idx == 1 else f"Contato {idx}", key=f"new_supplier_contact_name_{idx}", placeholder="Nome" if idx == 1 else "Opcional")
-                        with phone_col:
-                            phone = st.text_input("Telefone com DDD" if idx == 1 else f"Telefone {idx}", key=f"new_supplier_phone_{idx}", placeholder="(48) 99999-9999")
-                        with wa_col:
-                            has_whatsapp = st.checkbox("WhatsApp", key=f"new_supplier_whatsapp_{idx}")
-                        contact_inputs.append((contact_name.strip(), phone.strip(), bool(has_whatsapp)))
-                    submitted = st.form_submit_button("Adicionar fornecedor à base", type="primary", use_container_width=True)
-
-                if submitted:
-                    clean_name = supplier_name.strip()
-                    clean_city = city_text.strip()
-                    ddd_clean = re.sub(r"\D", "", ddd)[-2:]
-                    errors = []
-                    if not clean_name:
-                        errors.append("Informe o nome do fornecedor.")
-                    if not clean_city:
-                        errors.append("Informe a cidade.")
-
-                    prepared_contacts = []
-                    whatsapp_numbers = []
-                    normalized_numbers = set()
-                    phone_raw_values = []
-                    for contact_name, phone, has_whatsapp in contact_inputs:
-                        if not phone and not contact_name:
-                            continue
-                        if not phone:
-                            errors.append(f"Informe o telefone de {contact_name} ou deixe essa linha vazia.")
-                            continue
-                        parsed = parse_phones(phone, ddd_clean)
-                        if len(parsed) != 1:
-                            errors.append(f"Confira o telefone '{phone}'. Use um número por linha e inclua o DDD se necessário.")
-                            continue
-                        international = parsed[0][1]
-                        if international in normalized_numbers:
-                            errors.append(f"O número {phone} está repetido no formulário.")
-                            continue
-                        normalized_numbers.add(international)
-                        person = contact_name or "Contato"
-                        prepared_contacts.append(f"{person}: {phone}")
-                        phone_raw_values.append(phone)
-                        if has_whatsapp:
-                            whatsapp_numbers.append(phone)
-
-                    if not phone_raw_values:
-                        errors.append("Cadastre pelo menos um telefone.")
-
-                    city_key = canonical_city(clean_city)
-                    latitude = longitude = None
-                    display_city = clean_city
-                    if not errors:
-                        if city_key:
-                            latitude, longitude = CITY_COORDS[city_key]
-                            display_city = CITY_LABELS.get(city_key, clean_city)
-                        else:
-                            with st.spinner("Localizando o município para posicionar o fornecedor no mapa..."):
-                                geocoded = geocode_other_city(f"{clean_city}, {uf_value}")
-                            if geocoded:
-                                latitude, longitude, _ = geocoded
-                                city_key = normalize_text(clean_city)
-                                display_city = clean_city.strip().title()
-                            else:
-                                errors.append("Não consegui localizar essa cidade. Confira o nome e o estado.")
-
-                    if errors:
-                        for error in errors:
-                            st.error(error)
-                    else:
-                        new_row = {"Nome": clean_name, "Cidade": display_city}
-                        supplier_key = supplier_key_for_row(new_row)
-                        current_keys = set(partners.get("supplier_key", pd.Series(dtype=str)).astype(str))
-                        if supplier_key in current_keys:
-                            st.error("Já existe um cadastro com esse nome e essa cidade. Confira a base antes de adicionar novamente.")
-                        else:
-                            payload = {
-                                "supplier_key": supplier_key,
-                                "name": clean_name,
-                                "phone_numbers": "; ".join(phone_raw_values),
-                                "city": display_city,
-                                "ddds": ddd_clean,
-                                "state": uf_value,
-                                "contacts": "; ".join(prepared_contacts),
-                                "category": category,
-                                "whatsapp_numbers": "; ".join(whatsapp_numbers),
-                                "latitude": float(latitude),
-                                "longitude": float(longitude),
-                                "created_by": str(user.id),
-                            }
-                            try:
-                                supabase_client.table("supplier_directory").insert(payload).execute()
-                                st.cache_data.clear()
-                                st.success(f"{clean_name} foi adicionado à base. O cadastro aparecerá para toda a equipe.")
-                                st.rerun()
-                            except Exception as exc:
-                                error_text = str(exc).casefold()
-                                if "duplicate" in error_text or "unique" in error_text or "23505" in error_text:
-                                    st.error("Já existe um fornecedor com essa identificação. Confira o nome e a cidade.")
-                                elif "row-level security" in error_text or "42501" in error_text or "permission" in error_text:
-                                    st.error("O banco recusou o cadastro. Confira se você entrou como gestor e executou o SQL de gestão no Supabase.")
-                                else:
-                                    st.error("Não foi possível salvar o fornecedor no banco. Confira a tabela supplier_directory e tente novamente.")
-
-        with premium_tab:
+                return
             if not premium_overrides_ready:
                 st.error(
-                    "A classificação premium compartilhada ainda não está habilitada no banco. "
-                    "Execute `supabase/add_supplier_directory.sql` desta versão no SQL Editor do Supabase."
+                    "O controle compartilhado de Premium ainda não está habilitado. Execute "
+                    "`supabase/add_supplier_directory.sql` no SQL Editor do Supabase."
                 )
-            elif partners.empty:
-                st.info("Não há fornecedores cadastrados para gerenciar.")
+                return
+            if not indexed:
+                st.info("Não há fornecedores disponíveis para editar.")
+                return
+            selected_key = st.selectbox(
+                "Selecione o fornecedor que deseja editar",
+                options=list(indexed.keys()),
+                format_func=lambda key: indexed[key]["label"],
+                key="manager_edit_supplier_key",
+            )
+            selected_row = indexed[selected_key]["row"]
+
+        add_mode = mode == "Adicionar parceiro"
+        if add_mode and not directory_ready:
+            st.error(
+                "O cadastro permanente ainda não está habilitado. No Supabase, abra SQL Editor e execute "
+                "`supabase/add_supplier_directory.sql` desta versão. Depois atualize esta página."
+            )
+            return
+
+        if add_mode:
+            prefix = "manager_add_supplier"
+            supplier_name_default = ""
+            city_default = ""
+            ddd_default = ""
+            uf_default = "SC"
+            category_default = "Regular"
+            phone_rows_default: list[tuple[str, str, bool]] = []
+        else:
+            prefix = "manager_edit_" + re.sub(r"[^A-Za-z0-9]", "", str(selected_key))[:18]
+            supplier_name_default = str(selected_row.get("Nome", ""))
+            city_default = str(selected_row.get("Cidade", ""))
+            ddd_default = str(selected_row.get("DDD(s)", ""))
+            uf_default = str(selected_row.get("UF provável pelo DDD", "SC") or "SC").upper()
+            current_premium = premium_overrides.get(
+                str(selected_key), bool(selected_row.get("is_premium", False))
+            )
+            category_default = "Premium" if current_premium else "Regular"
+            contacts_for_form = extract_contact_phones(
+                str(selected_row.get("Números", "")),
+                ddd_default,
+                str(selected_row.get("Contatos", "")),
+            )
+            whatsapp_set = {
+                number for _, number in parse_phones(
+                    str(selected_row.get("WhatsApp(s)", "")), ddd_default
+                )
+            }
+            phone_rows_default = []
+            for contact_name, number in contacts_for_form[:20]:
+                shown_phone = format_phone(number) if normalize_phone(number, ddd_default) else number
+                phone_rows_default.append((
+                    contact_name if contact_name != "Contato" else "",
+                    shown_phone,
+                    number in whatsapp_set or (normalize_phone(number, ddd_default) is not None and is_whatsapp(normalize_phone(number, ddd_default) or "")),
+                ))
+
+        # Add mode starts with four empty slots; edit mode preserves all existing
+        # contacts (up to 20) so saving a profile does not silently drop phone lines.
+        desired_contact_rows = 4 if add_mode else max(4, len(phone_rows_default))
+        desired_contact_rows = min(desired_contact_rows, 20)
+        while len(phone_rows_default) < desired_contact_rows:
+            phone_rows_default.append(("", "", False))
+
+        state_options = ["SC", "PR", "RS", "SP", "MG", "RJ", "GO", "MS", "MT", "BA", "ES", "DF", "AC", "AL", "AP", "AM", "CE", "MA", "PA", "PB", "PE", "PI", "RN", "RO", "RR", "SE", "TO"]
+        state_index = state_options.index(uf_default) if uf_default in state_options else 0
+
+        with st.form(f"{prefix}_form", clear_on_submit=add_mode):
+            supplier_name = st.text_input(
+                "Nome do fornecedor", value=supplier_name_default,
+                placeholder="Ex.: Auto Peças Exemplo", key=f"{prefix}_name",
+            )
+            city_text = st.text_input(
+                "Cidade", value=city_default,
+                placeholder="Digite o município, por exemplo Tubarão", key=f"{prefix}_city",
+            )
+            uf_value = st.selectbox(
+                "Estado", state_options, index=state_index, key=f"{prefix}_state",
+            )
+            ddd = st.text_input(
+                "DDD padrão (opcional)", value=ddd_default,
+                placeholder="Ex.: 48", max_chars=3, key=f"{prefix}_ddd",
+            )
+            category = st.selectbox(
+                "Classificação", ["Regular", "Premium"],
+                index=0 if category_default == "Regular" else 1,
+                help="Somente gestores podem alterar essa classificação. A decisão será compartilhada com a equipe.",
+                key=f"{prefix}_category",
+            )
+            st.markdown("**Contatos e telefones**")
+            st.caption("Informe um telefone por linha. Marque WhatsApp também para telefones fixos que tenham WhatsApp.")
+            contact_inputs = []
+            for idx, defaults in enumerate(phone_rows_default, start=1):
+                default_contact, default_phone, default_whatsapp = defaults
+                name_col, phone_col, wa_col = st.columns([1.0, 1.45, 0.85], gap="small")
+                with name_col:
+                    contact_name = st.text_input(
+                        "Nome do contato" if idx == 1 else f"Contato {idx}",
+                        value=default_contact,
+                        key=f"{prefix}_contact_name_{idx}",
+                        placeholder="Nome" if idx == 1 else "Opcional",
+                    )
+                with phone_col:
+                    phone = st.text_input(
+                        "Telefone com DDD" if idx == 1 else f"Telefone {idx}",
+                        value=default_phone,
+                        key=f"{prefix}_phone_{idx}",
+                        placeholder="(48) 99999-9999",
+                    )
+                with wa_col:
+                    has_whatsapp = st.checkbox(
+                        "WhatsApp", value=default_whatsapp,
+                        key=f"{prefix}_whatsapp_{idx}",
+                    )
+                contact_inputs.append((contact_name.strip(), phone.strip(), bool(has_whatsapp)))
+
+            submitted = st.form_submit_button(
+                "Adicionar fornecedor à base" if add_mode else "Salvar alterações do fornecedor",
+                type="primary", use_container_width=True,
+            )
+
+        if not submitted:
+            return
+
+        clean_name = supplier_name.strip()
+        clean_city = city_text.strip()
+        ddd_clean = re.sub(r"\D", "", ddd)[-2:]
+        errors = []
+        if not clean_name:
+            errors.append("Informe o nome do fornecedor.")
+        if not clean_city:
+            errors.append("Informe a cidade.")
+
+        prepared_contacts = []
+        whatsapp_numbers = []
+        normalized_numbers = set()
+        phone_raw_values = []
+        for contact_name, phone, has_whatsapp in contact_inputs:
+            if not phone and not contact_name:
+                continue
+            if not phone:
+                errors.append(f"Informe o telefone de {contact_name} ou deixe essa linha vazia.")
+                continue
+            parsed = parse_phones(phone, ddd_clean)
+            if len(parsed) != 1:
+                errors.append(f"Confira o telefone '{phone}'. Use um número por linha e inclua o DDD se necessário.")
+                continue
+            international = parsed[0][1]
+            if international in normalized_numbers:
+                errors.append(f"O número {phone} está repetido no formulário.")
+                continue
+            normalized_numbers.add(international)
+            person = contact_name or "Contato"
+            prepared_contacts.append(f"{person}: {phone}")
+            phone_raw_values.append(phone)
+            if has_whatsapp:
+                whatsapp_numbers.append(phone)
+
+        if not phone_raw_values:
+            errors.append("Cadastre pelo menos um telefone.")
+
+        city_key = canonical_city(clean_city)
+        latitude = longitude = None
+        display_city = clean_city
+        if not errors:
+            if city_key:
+                latitude, longitude = CITY_COORDS[city_key]
+                display_city = CITY_LABELS.get(city_key, clean_city)
             else:
-                indexed = {}
-                for _, row in partners.sort_values(["Nome", "Cidade"], kind="stable").iterrows():
-                    key = str(row.get("supplier_key") or supplier_key_for_row(row))
-                    label = f"{str(row.get('Nome', 'Fornecedor'))} — {str(row.get('Cidade', 'Cidade não informada'))}"
-                    # Chaves podem repetir caso existam linhas duplicadas; a mesma ficha será uma opção só.
-                    indexed.setdefault(key, {"label": label, "row": row})
-                choices = list(indexed.keys())
-                selected_key = st.selectbox(
-                    "Escolha o fornecedor",
-                    options=choices,
-                    format_func=lambda key: indexed[key]["label"],
-                    key="manager_supplier_premium_choice",
-                )
-                selected_row = indexed[selected_key]["row"]
-                current_value = premium_overrides.get(selected_key, bool(selected_row.get("is_premium", False)))
-                premium_choice = st.checkbox(
-                    "Este fornecedor é PREMIUM",
-                    value=bool(current_value),
-                    key=f"manager_premium_toggle_{selected_key[:24]}",
-                    help="O selo será atualizado para todos os compradores depois de salvar.",
-                )
-                current_saved_value = premium_overrides.get(selected_key, bool(selected_row.get("is_premium", False)))
-                if st.button("Salvar classificação", type="primary", key=f"manager_save_premium_{selected_key[:24]}", use_container_width=True):
-                    if bool(premium_choice) == bool(current_saved_value):
-                        st.info("A classificação já está assim; nenhuma alteração foi necessária.")
-                    else:
-                        override_payload = {
-                            "supplier_key": selected_key,
-                            "supplier_name": str(selected_row.get("Nome", "Fornecedor"))[:200],
-                            "city": str(selected_row.get("Cidade", ""))[:200],
-                            "is_premium": bool(premium_choice),
-                            "updated_by": str(user.id),
-                        }
-                        try:
-                            supabase_client.table("supplier_premium_overrides").upsert(
-                                override_payload, on_conflict="supplier_key"
-                            ).execute()
-                            st.success(
-                                f"{override_payload['supplier_name']} foi marcado como "
-                                f"{'PREMIUM' if premium_choice else 'regular'}. A alteração será compartilhada com toda a equipe."
-                            )
-                            st.session_state.pop("search_result", None)
-                            st.cache_data.clear()
-                            st.rerun()
-                        except Exception as exc:
-                            error_text = str(exc).casefold()
-                            if "row-level security" in error_text or "42501" in error_text or "permission" in error_text:
-                                st.error("O banco recusou a alteração. Confira se o usuário é gestor e execute o SQL atualizado de gestão no Supabase.")
-                            else:
-                                st.error("Não foi possível salvar a classificação. Confira a tabela supplier_premium_overrides no Supabase.")
+                with st.spinner("Localizando o município para posicionar o fornecedor no mapa..."):
+                    geocoded = geocode_other_city(f"{clean_city}, {uf_value}")
+                if geocoded:
+                    latitude, longitude, _ = geocoded
+                    display_city = clean_city.strip().title()
+                else:
+                    errors.append("Não consegui localizar essa cidade. Confira o nome e o estado.")
+
+        if errors:
+            for error in errors:
+                st.error(error)
+            return
+
+        # For edits, retain the original key to preserve links to ratings and premium history,
+        # even when the displayed supplier name or city changes.
+        if add_mode:
+            new_row = {"Nome": clean_name, "Cidade": display_city}
+            target_key = supplier_key_for_row(new_row)
+            current_keys = set(partners.get("supplier_key", pd.Series(dtype=str)).astype(str))
+            if target_key in current_keys:
+                st.error("Já existe um cadastro com esse nome e essa cidade. Se deseja corrigir um cadastro, use Editar parceiro existente.")
+                return
+        else:
+            target_key = str(selected_key)
+
+        if add_mode:
+            payload = {
+                "supplier_key": target_key,
+                "name": clean_name,
+                "phone_numbers": "; ".join(phone_raw_values),
+                "city": display_city,
+                "ddds": ddd_clean,
+                "state": uf_value,
+                "contacts": "; ".join(prepared_contacts),
+                "category": category,
+                "whatsapp_numbers": "; ".join(whatsapp_numbers),
+                "latitude": float(latitude),
+                "longitude": float(longitude),
+                "created_by": str(user.id),
+            }
+            try:
+                supabase_client.table("supplier_directory").insert(payload).execute()
+                st.cache_data.clear()
+                st.success(f"{clean_name} foi adicionado à base e ficará disponível para toda a equipe.")
+                st.rerun()
+            except Exception as exc:
+                error_text = str(exc).casefold()
+                if "duplicate" in error_text or "unique" in error_text or "23505" in error_text:
+                    st.error("Já existe um fornecedor com essa identificação. Confira o nome e a cidade.")
+                elif "row-level security" in error_text or "42501" in error_text or "permission" in error_text:
+                    st.error("O banco recusou o cadastro. Confira se você entrou como gestor e executou o SQL de gestão no Supabase.")
+                else:
+                    st.error("Não foi possível salvar o fornecedor no banco. Confira a tabela supplier_directory e tente novamente.")
+            return
+
+        if not profile_overrides_ready or not premium_overrides_ready:
+            st.error("Antes de editar, execute os scripts de gestão indicados no README desta versão.")
+            return
+
+        profile_payload = {
+            "supplier_key": target_key,
+            "name": clean_name,
+            "phone_numbers": "; ".join(phone_raw_values),
+            "city": display_city,
+            "ddds": ddd_clean,
+            "state": uf_value,
+            "contacts": "; ".join(prepared_contacts),
+            "whatsapp_numbers": "; ".join(whatsapp_numbers),
+            "latitude": float(latitude),
+            "longitude": float(longitude),
+            "updated_by": str(user.id),
+        }
+        premium_payload = {
+            "supplier_key": target_key,
+            "supplier_name": clean_name[:200],
+            "city": display_city[:200],
+            "is_premium": category == "Premium",
+            "updated_by": str(user.id),
+        }
+        try:
+            supabase_client.table("supplier_profile_overrides").upsert(
+                profile_payload, on_conflict="supplier_key"
+            ).execute()
+            supabase_client.table("supplier_premium_overrides").upsert(
+                premium_payload, on_conflict="supplier_key"
+            ).execute()
+            st.cache_data.clear()
+            st.session_state.pop("search_result", None)
+            st.success(f"As alterações de {clean_name} foram salvas e compartilhadas com a equipe.")
+            st.rerun()
+        except Exception as exc:
+            error_text = str(exc).casefold()
+            if "row-level security" in error_text or "42501" in error_text or "permission" in error_text:
+                st.error("O banco recusou a alteração. Confira se o usuário é gestor e execute os scripts de gestão atualizados no Supabase.")
+            else:
+                st.error("Não foi possível salvar todas as alterações. Confira as tabelas supplier_profile_overrides e supplier_premium_overrides no Supabase.")
 
 
 supabase_client, logged_user, supabase_configured, is_logged_in = render_auth_panel()
@@ -1065,13 +1229,15 @@ try:
     csv_partners = load_partners()
     database_partners, supplier_directory_ready, supplier_directory_error = load_supplier_directory(supabase_client)
     premium_overrides, premium_overrides_ready, premium_overrides_error = load_supplier_premium_overrides(supabase_client)
+    profile_overrides, profile_overrides_ready, profile_overrides_error = load_supplier_profile_overrides(supabase_client)
     if database_partners.empty:
         partners = csv_partners.copy()
     else:
         partners = pd.concat([csv_partners, database_partners], ignore_index=True, sort=False)
     partners = ensure_premium_column(partners)
-    partners["cidade_mapa"] = partners["Cidade"].map(canonical_city)
     partners = ensure_supplier_key_column(partners)
+    partners = apply_supplier_profile_overrides(partners, profile_overrides)
+    partners["cidade_mapa"] = partners["Cidade"].map(canonical_city)
     partners = apply_premium_overrides(partners, premium_overrides)
 except Exception as exc:
     st.error(f"Não foi possível carregar a lista de parceiros: {exc}")
@@ -1084,9 +1250,10 @@ render_manager_supplier_form(
     supplier_directory_ready,
     premium_overrides_ready,
     premium_overrides,
+    profile_overrides_ready,
 )
-if (getattr(logged_user, "email", "") or "").strip().casefold() in MANAGER_EMAILS and (not supplier_directory_ready or not premium_overrides_ready):
-    st.caption("Para habilitar o cadastro de parceiros e a classificação premium compartilhada, execute `supabase/add_supplier_directory.sql` no SQL Editor do Supabase.")
+if (getattr(logged_user, "email", "") or "").strip().casefold() in MANAGER_EMAILS and (not supplier_directory_ready or not premium_overrides_ready or not profile_overrides_ready):
+    st.caption("Para habilitar todos os recursos de gestão, execute `supabase/add_supplier_directory.sql` e `supabase/add_supplier_profile_editing.sql` no SQL Editor do Supabase.")
 
 form_left, form_right = st.columns([4, 1])
 with form_left:
