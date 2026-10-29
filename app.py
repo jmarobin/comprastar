@@ -40,22 +40,8 @@ st.set_page_config(
     initial_sidebar_state="collapsed",
 )
 
-# Clicar na logo define reset_home=1 na URL. Limpamos a busca e voltamos à visão geral.
-# Isto precisa acontecer antes de criar o widget de cidade, para poder limpar seu estado.
-try:
-    reset_home_requested = st.query_params.get("reset_home") == "1"
-except Exception:
-    reset_home_requested = False
-
-if reset_home_requested:
-    for state_key in ("city_autocomplete", "last_searched_input", "search_result", "force_city_search"):
-        st.session_state.pop(state_key, None)
-    try:
-        del st.query_params["reset_home"]
-    except Exception:
-        pass
-
-# A logo é embutida no cabeçalho para que funcione também depois do deploy no Streamlit Cloud.
+# A logo é embutida no botão nativo do Streamlit para limpar a busca sem navegar
+# para outra URL/aba. O botão limpa o estado antes de o widget da cidade ser criado.
 try:
     LOGO_B64 = base64.b64encode(LOGO_FILE.read_bytes()).decode("ascii")
 except OSError:
@@ -69,15 +55,15 @@ st.markdown(
       footer {{visibility:hidden !important; height:0 !important;}}
       .stApp {{background:#071426;}}
       .block-container {{padding-top: 1.25rem; padding-bottom: 1.2rem; max-width: 1500px;}}
-      .hero {{display:flex; align-items:center; gap:1.35rem; padding:1.25rem 1.5rem; border-radius:18px; background:linear-gradient(120deg,#071426,#0c2342 62%,#152d4a); color:#f8fafc; margin-bottom:1.1rem; border:1px solid #203b5b; box-shadow:0 12px 30px rgba(0,0,0,.24);}}
-      .hero-logo-link {{flex:0 0 auto; display:flex; align-items:center; justify-content:center; width:225px; min-height:82px; box-sizing:border-box; padding:0; background:transparent; border:0; text-decoration:none !important; cursor:pointer; border-radius:10px;}}
-      .hero-logo-link:focus-visible {{outline:2px solid #ff8617; outline-offset:5px;}}
-      .hero-logo-wrap {{display:flex; align-items:center; justify-content:center; width:100%; min-height:82px; box-sizing:border-box; padding:0; background:transparent; border:0;}}
-      .hero-logo {{display:block; width:100%; height:auto; max-height:86px; object-fit:contain; filter:drop-shadow(0 3px 8px rgba(0,0,0,.18)); transition:transform .15s ease, filter .15s ease;}}
-      .hero-logo-link:hover .hero-logo {{transform:translateY(-1px); filter:drop-shadow(0 4px 11px rgba(255,134,23,.20));}}
+      .st-key-hero_header {{padding:1.25rem 1.5rem; border-radius:18px; background:linear-gradient(120deg,#071426,#0c2342 62%,#152d4a); color:#f8fafc; margin-bottom:1.1rem; border:1px solid #203b5b; box-shadow:0 12px 30px rgba(0,0,0,.24);}}
+      .st-key-hero_header [data-testid="stHorizontalBlock"] {{align-items:center;}}
       .hero-copy h1 {{font-size:1.85rem; line-height:1.2; margin:0 0 .4rem 0; color:#f8fafc; letter-spacing:-.025em;}}
       .hero-copy p {{margin:0; color:#c2d2e5; font-size:1rem;}}
       .hero-accent {{width:46px; height:4px; margin-top:.9rem; border-radius:99px; background:linear-gradient(90deg,#ff315e,#ff8617);}}
+      div.st-key-home_logo button {{min-height:82px !important; height:82px !important; width:225px !important; max-width:100%; padding:0 !important; margin:0 !important; background:transparent url("data:image/png;base64,{LOGO_B64}") center center / contain no-repeat !important; border:0 !important; box-shadow:none !important; color:transparent !important; border-radius:10px !important; cursor:pointer !important;}}
+      div.st-key-home_logo button p {{visibility:hidden !important; color:transparent !important;}}
+      div.st-key-home_logo button:hover {{transform:translateY(-1px); filter:drop-shadow(0 4px 11px rgba(255,134,23,.20)); background-color:transparent !important;}}
+      div.st-key-home_logo button:focus-visible {{outline:2px solid #ff8617 !important; outline-offset:5px;}}
       .metric-box {{border:1px solid #243955; border-radius:14px; padding:.85rem 1rem; min-height:90px; background:#0e1d31; box-shadow:0 5px 18px rgba(0,0,0,.16);}}
       .metric-label {{font-size:.82rem; color:#aebfd3; margin-bottom:.25rem;}}
       .metric-value {{font-size:1.55rem; font-weight:750; color:#ff8a1c;}}
@@ -110,19 +96,34 @@ st.markdown(
       div[data-testid="stExpander"] {{border-color:#243955; border-radius:12px;}}
       .app-footer {{margin-top:2rem; padding:1rem 0 .35rem; text-align:center; color:#8295ad; font-size:.82rem; border-top:1px solid #20324a;}}
       .app-footer strong {{color:#ff8a1c; font-weight:750; letter-spacing:.05em;}}
-      @media (max-width:650px) {{.hero {{align-items:flex-start; flex-direction:column; padding:1rem;}} .hero-logo-wrap {{width:185px; min-height:68px;}} .hero-copy h1 {{font-size:1.55rem;}}}}
+      @media (max-width:650px) {{.st-key-hero_header {{padding:1rem;}} .st-key-hero_header [data-testid="stHorizontalBlock"] {{gap:.5rem;}} div.st-key-home_logo button {{width:150px !important; min-height:62px !important; height:62px !important;}} .hero-copy h1 {{font-size:1.45rem;}} .hero-copy p {{font-size:.9rem;}}}}
     </style>
-    <div class="hero">
-      {f'<a class="hero-logo-link" href="?reset_home=1" aria-label="Voltar à página inicial" title="Voltar à página inicial"><div class="hero-logo-wrap"><img class="hero-logo" src="data:image/png;base64,{LOGO_B64}" alt="CompraStar — voltar à página inicial"></div></a>' if LOGO_B64 else ''}
-      <div class="hero-copy">
-        <h1>CompraStar - Localizador de Parceiros</h1>
-        <p>Encontre autopeças próximas e encontre os contatos em poucos cliques.</p>
-        <div class="hero-accent"></div>
-      </div>
-    </div>
     """,
     unsafe_allow_html=True,
 )
+
+with st.container(key="hero_header"):
+    logo_col, copy_col = st.columns([1.15, 3.85], gap="large", vertical_alignment="center")
+    with logo_col:
+        if LOGO_B64:
+            home_clicked = st.button(" ", key="home_logo", help="Voltar à página inicial", type="secondary")
+        else:
+            home_clicked = st.button("STAR · Início", key="home_logo", help="Voltar à página inicial", type="secondary")
+    with copy_col:
+        st.markdown(
+            '<div class="hero-copy">'
+            '<h1>CompraStar - Localizador de Parceiros</h1>'
+            '<p>Encontre autopeças próximas e encontre os contatos em poucos cliques.</p>'
+            '<div class="hero-accent"></div></div>',
+            unsafe_allow_html=True,
+        )
+
+if home_clicked:
+    # Limpa apenas o estado da pesquisa; mantém a sessão autenticada ativa.
+    for state_key in ("city_autocomplete", "last_searched_input", "search_result", "force_city_search"):
+        st.session_state.pop(state_key, None)
+    st.session_state["search_radius"] = 25
+    st.rerun()
 
 
 def normalize_text(value: object) -> str:
@@ -1102,7 +1103,7 @@ with form_left:
         on_change=on_city_commit,
     )
 with form_right:
-    radius = st.slider("Raio de busca (km)", min_value=25, max_value=100, value=25, step=25)
+    radius = st.slider("Raio de busca (km)", min_value=25, max_value=100, value=25, step=25, key="search_radius")
 
 submitted = st.button("Buscar parceiros próximos", use_container_width=True)
 city_changed = bool(
@@ -1325,15 +1326,17 @@ with map_col:
     st_folium(m, use_container_width=True, height=610, returned_objects=[])
 with cards_col:
     if overview_mode:
-        st.markdown("#### Parceiros em destaque")
-        st.caption("Todos os parceiros estão no mapa. Pesquise uma cidade para ver os contatos próximos.")
-        cards_to_show = nearby.head(5)
+        st.markdown("#### Fornecedores premium")
+        st.caption("A lista inicial destaca apenas parceiros premium. O mapa mostra todos os fornecedores cadastrados.")
+        cards_to_show = nearby[nearby["is_premium"].astype(bool)].head(5)
     else:
         st.markdown("#### Contatos da região")
         st.caption("Clique em um marcador no mapa ou navegue pelos cartões para consultar contatos e avaliações.")
         cards_to_show = nearby.head(8)
     if nearby.empty:
         st.info("Nenhuma autopeça com cidade mapeada foi encontrada. Tente pesquisar outra cidade.")
+    elif overview_mode and cards_to_show.empty:
+        st.info("Ainda não há fornecedores premium cadastrados para destaque. O mapa continua mostrando todos os parceiros.")
     else:
         for _, row in cards_to_show.iterrows():
             render_contact_card(
