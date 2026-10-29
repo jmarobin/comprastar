@@ -11,8 +11,6 @@ from pathlib import Path
 import folium
 import pandas as pd
 import streamlit as st
-from folium.plugins import MarkerCluster
-from branca.element import Element
 from geopy.geocoders import Nominatim
 from streamlit_folium import st_folium
 
@@ -20,12 +18,12 @@ from city_coords import ALIASES, CITY_COORDS, CITY_LABELS
 
 BASE_DIR = Path(__file__).resolve().parent
 DATA_FILE = BASE_DIR / "data" / "parceiros.csv"
-LOGO_FILE = BASE_DIR / "logo_marobin.png"
+LOGO_FILE = BASE_DIR / "logo_comprastar.png"
 EARTH_RADIUS_KM = 6371.0088
 
 st.set_page_config(
-    page_title="Localizador de Parceiros",
-    page_icon="📍",
+    page_title="CompraStar - Localizador de Parceiros",
+    page_icon="⭐",
     layout="wide",
     initial_sidebar_state="collapsed",
 )
@@ -45,9 +43,9 @@ st.markdown(
       .stApp {{background:#071426;}}
       .block-container {{padding-top: 1.25rem; padding-bottom: 1.2rem; max-width: 1500px;}}
       .hero {{display:flex; align-items:center; gap:1.35rem; padding:1.25rem 1.5rem; border-radius:18px; background:linear-gradient(120deg,#071426,#0c2342 62%,#152d4a); color:#f8fafc; margin-bottom:1.1rem; border:1px solid #203b5b; box-shadow:0 12px 30px rgba(0,0,0,.24);}}
-      .hero-logo-wrap {{flex:0 0 auto; display:flex; align-items:center; justify-content:center; width:235px; min-height:96px; box-sizing:border-box; padding:.55rem .7rem; border-radius:12px; background:#f8fafc; border:1px solid #dbe2ea;}}
-      .hero-logo {{display:block; width:100%; height:auto; max-height:90px; object-fit:contain;}}
-      .hero-copy h1 {{font-size:1.9rem; line-height:1.2; margin:0 0 .4rem 0; color:#f8fafc; letter-spacing:-.025em;}}
+      .hero-logo-wrap {{flex:0 0 auto; display:flex; align-items:center; justify-content:center; width:225px; min-height:82px; box-sizing:border-box; padding:0; background:transparent; border:0;}}
+      .hero-logo {{display:block; width:100%; height:auto; max-height:86px; object-fit:contain; filter:drop-shadow(0 3px 8px rgba(0,0,0,.18));}}
+      .hero-copy h1 {{font-size:1.85rem; line-height:1.2; margin:0 0 .4rem 0; color:#f8fafc; letter-spacing:-.025em;}}
       .hero-copy p {{margin:0; color:#c2d2e5; font-size:1rem;}}
       .hero-accent {{width:46px; height:4px; margin-top:.9rem; border-radius:99px; background:linear-gradient(90deg,#ff315e,#ff8617);}}
       .metric-box {{border:1px solid #243955; border-radius:14px; padding:.85rem 1rem; min-height:90px; background:#0e1d31; box-shadow:0 5px 18px rgba(0,0,0,.16);}}
@@ -71,13 +69,13 @@ st.markdown(
       div[data-testid="stExpander"] {{border-color:#243955; border-radius:12px;}}
       .app-footer {{margin-top:2rem; padding:1rem 0 .35rem; text-align:center; color:#8295ad; font-size:.82rem; border-top:1px solid #20324a;}}
       .app-footer strong {{color:#ff8a1c; font-weight:750; letter-spacing:.05em;}}
-      @media (max-width:650px) {{.hero {{align-items:flex-start; flex-direction:column; padding:1rem;}} .hero-logo-wrap {{width:190px; min-height:70px;}} .hero-copy h1 {{font-size:1.55rem;}}}}
+      @media (max-width:650px) {{.hero {{align-items:flex-start; flex-direction:column; padding:1rem;}} .hero-logo-wrap {{width:185px; min-height:68px;}} .hero-copy h1 {{font-size:1.55rem;}}}}
     </style>
     <div class="hero">
-      {f'<div class="hero-logo-wrap"><img class="hero-logo" src="data:image/png;base64,{LOGO_B64}" alt="Marobin Group"></div>' if LOGO_B64 else ''}
+      {f'<div class="hero-logo-wrap"><img class="hero-logo" src="data:image/png;base64,{LOGO_B64}" alt="CompraStar"></div>' if LOGO_B64 else ''}
       <div class="hero-copy">
-        <h1>Localizador de Parceiros</h1>
-        <p>Encontre autopeças próximas e abra o WhatsApp do contato em poucos cliques.</p>
+        <h1>CompraStar - Localizador de Parceiros</h1>
+        <p>Encontre autopeças próximas e encontre os contatos em poucos cliques.</p>
         <div class="hero-accent"></div>
       </div>
     </div>
@@ -298,6 +296,17 @@ def resolve_city_prefix(query: str) -> str | None:
     return None
 
 
+def on_city_commit() -> None:
+    """Ao pressionar Enter/selecionar uma sugestão, completa a cidade e dispara a busca."""
+    value = str(st.session_state.get("city_autocomplete", "") or "").strip()
+    if not value:
+        return
+    key = resolve_city_prefix(value)
+    if key:
+        st.session_state["city_autocomplete"] = CITY_LABELS.get(key, key.title())
+    st.session_state["force_city_search"] = True
+
+
 def resolve_search_city(query: str) -> tuple[float, float, str] | None:
     key = resolve_city_prefix(query)
     if key:
@@ -309,17 +318,27 @@ def resolve_search_city(query: str) -> tuple[float, float, str] | None:
     return None
 
 
-def popup_html(row: pd.Series, distance: float) -> str:
-    name = html.escape(row["Nome"])
-    city = html.escape(row["Cidade"])
-    phones = contact_links(row["Números"], row["DDD(s)"], row.get("Contatos", ""))
-    return f"""
-    <div style="font-family:Arial,sans-serif;min-width:210px;max-width:290px;background:#121820;color:#e6edf3;padding:4px">
-      <div style="font-weight:700;font-size:15px;margin-bottom:5px;color:#f0f6fc">{name}</div>
-      <div style="font-size:12px;color:#9daab9;margin-bottom:7px">📍 {city} · {distance:.1f} km</div>
-      <div style="font-size:12px;line-height:1.7">{phones}</div>
-    </div>
-    """
+def city_popup_html(city_label: str, city_rows: pd.DataFrame) -> str:
+    """Popup com os parceiros do município, evitando marcadores sobrepostos no mapa."""
+    entries = []
+    for _, row in city_rows.sort_values("Nome", kind="stable").iterrows():
+        name = html.escape(str(row["Nome"]))
+        phones = contact_links(row["Números"], row["DDD(s)"], row.get("Contatos", ""))
+        entries.append(
+            f'<div style="padding:9px 0;border-top:1px solid #344256;">'
+            f'<div style="font-weight:700;color:#f4f7fb;margin-bottom:5px;">{name}</div>'
+            f'<div style="font-size:12px;line-height:1.7;">{phones}</div></div>'
+        )
+    count = len(city_rows)
+    return (
+        '<div style="font-family:Arial,sans-serif;min-width:220px;max-width:340px;'
+        'max-height:370px;overflow-y:auto;background:#0d1b2d;color:#e6edf3;padding:8px 10px;">'
+        f'<div style="font-size:16px;font-weight:800;color:#ff922b;margin-bottom:3px;">'
+        f'{html.escape(city_label)}</div>'
+        f'<div style="font-size:12px;color:#a9bbcf;margin-bottom:6px;">{count} parceiro(s) nesta cidade</div>'
+        + "".join(entries)
+        + "</div>"
+    )
 
 
 def render_contact_card(row: pd.Series, show_distance: bool = True) -> None:
@@ -343,16 +362,6 @@ except Exception as exc:
     st.error(f"Não foi possível carregar a lista de parceiros: {exc}")
     st.stop()
 
-# Se o comprador aceitou um prefixo único (ex.: "itaj"), complete o próprio
-# campo antes de renderizar o selectbox novamente.
-pending_city = st.session_state.get("city_autocomplete")
-if isinstance(pending_city, str) and pending_city.strip():
-    pending_key = resolve_city_prefix(pending_city)
-    if pending_key:
-        completed_city = CITY_LABELS.get(pending_key, pending_key.title())
-        if normalize_text(pending_city) != normalize_text(completed_city):
-            st.session_state["city_autocomplete"] = completed_city
-
 form_left, form_right = st.columns([4, 1])
 with form_left:
     city_options = sorted(set(CITY_LABELS.values()), key=lambda value: value.casefold())
@@ -363,18 +372,20 @@ with form_left:
         placeholder="Digite uma cidade… (ex.: Itajaí)",
         accept_new_options=True,
         filter_mode="fuzzy",
-        help="Digite uma cidade ou parte do nome e pressione Enter. Um prefixo único, como ‘itaj’, será completado para ‘Itajaí’ e a busca iniciará automaticamente.",
+        help="Digite a cidade e pressione Enter. Se o início identificar uma única cidade, o campo será completado e a busca começará automaticamente.",
         key="city_autocomplete",
+        on_change=on_city_commit,
     )
 with form_right:
-    radius = st.slider("Raio de busca (km)", min_value=25, max_value=100, value=100, step=25)
+    radius = st.slider("Raio de busca (km)", min_value=25, max_value=100, value=25, step=25)
 
 submitted = st.button("Buscar parceiros próximos", use_container_width=True)
 city_changed = bool(
     city_query and city_query.strip()
     and city_query.strip() != st.session_state.get("last_searched_input", "")
 )
-should_search = submitted or city_changed
+force_search = bool(st.session_state.pop("force_city_search", False))
+should_search = submitted or city_changed or force_search
 
 if should_search:
     if not city_query or not city_query.strip():
@@ -395,10 +406,13 @@ if should_search:
                 mapped["distancia_km"] = distances
                 nearby = mapped[mapped["distancia_km"] <= radius].copy()
                 nearby = nearby.sort_values(["distancia_km", "Nome"], kind="stable").reset_index(drop=True)
+                canonical_key = resolve_city_prefix(city_query) or normalize_text(display_name)
+                completed_label = CITY_LABELS.get(canonical_key, display_name)
                 st.session_state["search_result"] = {
+                    "city_key": canonical_key if canonical_key in CITY_COORDS else None,
                     "lat": lat,
                     "lon": lon,
-                    "display_name": display_name,
+                    "display_name": completed_label,
                     "query": city_query.strip(),
                     "radius": radius,
                     "nearby": nearby,
@@ -414,6 +428,7 @@ if result:
     nearby = result["nearby"]
     display_name = result["display_name"]
     radius_used = result["radius"]
+    reference_key = result.get("city_key")
 
     st.markdown(f"### Parceiros próximos de **{display_name}**")
     metric_cols = st.columns(3)
@@ -425,62 +440,78 @@ if result:
     for col, (label, value) in zip(metric_cols, metric_data):
         with col:
             st.markdown(f'<div class="metric-box"><div class="metric-label">{label}</div><div class="metric-value">{value}</div></div>', unsafe_allow_html=True)
+    st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
 
-    m = folium.Map(location=[lat, lon], zoom_start=8, control_scale=True, tiles=None)
-    # OpenStreetMap raster tiles work without a Carto/Google API token.
+    m = folium.Map(location=[lat, lon], zoom_start=9, control_scale=True, tiles=None, prefer_canvas=True)
+    # Mapa de ruas claro, sem inversão de cores nem chave de API.
     folium.TileLayer(
         tiles="OpenStreetMap",
         name="Mapa de ruas",
         attr="&copy; OpenStreetMap contributors",
         control=False,
+        max_zoom=19,
     ).add_to(m)
-    # Escurece visualmente os tiles do mapa sem afetar os marcadores ou os popups.
-    m.get_root().header.add_child(Element("""
+    m.get_root().header.add_child(folium.Element("""
       <style>
-        .leaflet-tile-pane .leaflet-tile {
-          filter: invert(88%) hue-rotate(180deg) saturate(62%) contrast(88%) brightness(92%);
-        }
+        .leaflet-div-icon { background: transparent !important; border: 0 !important; }
+        .leaflet-popup-content-wrapper { background: #0d1b2d; color: #e6edf3; border: 1px solid #344256; border-radius: 12px; box-shadow: 0 12px 28px rgba(7,20,38,.30); padding: 0; }
+        .leaflet-popup-content { margin: 0; max-width: 340px; }
+        .leaflet-popup-tip { background: #0d1b2d; }
+        .leaflet-popup-close-button { color: #e6edf3 !important; padding: 8px 9px 0 0 !important; }
       </style>
     """))
     folium.Circle(
         location=[lat, lon],
         radius=radius_used * 1000,
-        color="#ff7a18",
+        color="#ff8617",
         fill=True,
-        fill_color="#ff7a18",
-        fill_opacity=0.06,
-        weight=2,
+        fill_color="#ff8617",
+        fill_opacity=0.035,
+        weight=2.5,
         tooltip=f"Raio de {radius_used} km",
     ).add_to(m)
-    folium.Marker(
-        [lat, lon],
-        tooltip=f"Cidade pesquisada: {display_name}",
-        popup=folium.Popup(f"<b>Cidade pesquisada</b><br>{html.escape(display_name)}", max_width=220),
-        icon=folium.Icon(color="darkblue", icon="search", prefix="fa"),
-    ).add_to(m)
 
-    marker_cluster = MarkerCluster(name="Autopeças parceiras", disableClusteringAtZoom=11, spiderfyOnMaxZoom=True)
-    marker_cluster.add_to(m)
-    for _, row in nearby.iterrows():
-        partner_lat, partner_lon = CITY_COORDS[row["cidade_mapa"]]
+    # Um marcador por município: vários parceiros compartilham o centro da cidade na base,
+    # então um marcador individual por empresa só criaria uma pilha visual sem precisão real.
+    reference_key = reference_key or resolve_city_prefix(display_name)
+    for city_key, city_rows in nearby.groupby("cidade_mapa", sort=True):
+        partner_lat, partner_lon = CITY_COORDS[city_key]
+        city_label = CITY_LABELS.get(city_key, city_key.title())
+        count = len(city_rows)
+        count_label = str(count) if count < 100 else "99+"
+        is_reference = bool(reference_key and city_key == reference_key)
+        bg = "linear-gradient(135deg,#ff315e,#ff8617)" if is_reference else "linear-gradient(135deg,#ff9b2f,#ff7817)"
+        ring = "#fff2e7" if is_reference else "#ffffff"
+        badge = f'''<div style="width:38px;height:38px;border-radius:50%;display:flex;align-items:center;justify-content:center;box-sizing:border-box;background:{bg};border:2px solid {ring};box-shadow:0 3px 10px rgba(15,23,42,.35);color:#ffffff;font-family:Arial,sans-serif;font-size:13px;font-weight:800;">{count_label}</div>'''
         folium.Marker(
             [partner_lat, partner_lon],
-            tooltip=f"{row['Nome']} — {row['Cidade']}",
-            popup=folium.Popup(popup_html(row, float(row["distancia_km"])), max_width=320),
-            icon=folium.Icon(color="orange", icon="wrench", prefix="fa"),
-        ).add_to(marker_cluster)
+            tooltip=f"{city_label} · {count} parceiro(s)",
+            popup=folium.Popup(city_popup_html(city_label, city_rows), max_width=380, max_height=400),
+            icon=folium.DivIcon(html=badge, icon_size=(38, 38), icon_anchor=(19, 19), class_name="comprastar-city-marker"),
+        ).add_to(m)
+
+    # Se a cidade pesquisada não tiver parceiros cadastrados, ainda mostramos o ponto de referência.
+    has_reference_marker = bool(reference_key and nearby["cidade_mapa"].eq(reference_key).any()) if not nearby.empty else False
+    if not has_reference_marker:
+        search_icon = '''<div style="width:34px;height:34px;border-radius:50%;display:flex;align-items:center;justify-content:center;background:#0b2340;border:3px solid #ff315e;color:#ff9a26;font-size:20px;font-weight:900;box-shadow:0 3px 10px rgba(15,23,42,.4);">★</div>'''
+        folium.Marker(
+            [lat, lon],
+            tooltip=f"Cidade pesquisada: {display_name}",
+            popup=folium.Popup(f"<b>Cidade pesquisada</b><br>{html.escape(display_name)}", max_width=220),
+            icon=folium.DivIcon(html=search_icon, icon_size=(34, 34), icon_anchor=(17, 17), class_name="comprastar-search-marker"),
+        ).add_to(m)
 
     if not nearby.empty:
         min_lat, max_lat = min(lat, nearby["cidade_mapa"].map(lambda c: CITY_COORDS[c][0]).min()), max(lat, nearby["cidade_mapa"].map(lambda c: CITY_COORDS[c][0]).max())
         min_lon, max_lon = min(lon, nearby["cidade_mapa"].map(lambda c: CITY_COORDS[c][1]).min()), max(lon, nearby["cidade_mapa"].map(lambda c: CITY_COORDS[c][1]).max())
-        m.fit_bounds([[min_lat, min_lon], [max_lat, max_lon]], padding=(24, 24))
+        m.fit_bounds([[min_lat, min_lon], [max_lat, max_lon]], padding=(36, 36), max_zoom=11)
 
     map_col, cards_col = st.columns([1.75, 1], gap="large")
     with map_col:
         st_folium(m, use_container_width=True, height=610, returned_objects=[])
     with cards_col:
         st.markdown("#### Contatos da região")
-        st.caption("Clique em um marcador no mapa para ver o cartão completo. Os contatos também ficam listados aqui.")
+        st.caption("Clique em um marcador para ver os parceiros cadastrados naquela cidade. Os contatos também ficam listados aqui.")
         if nearby.empty:
             st.info("Nenhuma autopeça com cidade mapeada foi encontrada nesse raio. Tente ampliar o raio ou pesquisar outra cidade.")
         else:
@@ -508,8 +539,7 @@ if result:
             st.dataframe(unmapped[cols].rename(columns={"Nome": "Autopeça", "DDD(s)": "DDD", "UF provável pelo DDD": "UF provável"}), use_container_width=True, hide_index=True)
 else:
     st.markdown("### Como usar")
-    st.markdown("Digite uma cidade ou parte do nome e pressione Enter. Quando o trecho identificar uma única cidade — por exemplo, `itaj` — o campo será completado para Itajaí e a busca começará automaticamente. O botão continua disponível para refazer a busca após alterar o raio.")
-    st.markdown("<p class='small-note'>Dica: nomes de cidades sem acento também são aceitos. A primeira versão usa a lista de parceiros que veio na planilha enviada.</p>", unsafe_allow_html=True)
+    st.markdown("Digite a cidade e pressione Enter. Depois, navegue entre os parceiros encontrados no mapa e na lista ao lado.")
 
 with st.expander("Sobre a base de contatos"):
     st.write(f"A base carregada contém **{len(partners)} fichas de parceiros**. Somente registros com cidade reconhecida entram no mapa. Alguns cadastros podem precisar de correção manual antes de aparecer na busca.")
