@@ -53,6 +53,8 @@ st.markdown(
       .metric-value {{font-size:1.55rem; font-weight:750; color:#ff8a1c;}}
       .contact-card {{border:1px solid #243955; border-radius:14px; padding:.95rem 1rem; margin-bottom:.7rem; background:linear-gradient(145deg,#102039,#0b1728); box-shadow:0 5px 16px rgba(0,0,0,.16);}}
       .contact-name {{font-weight:750; color:#f4f7fb; font-size:1rem; margin-bottom:.25rem;}}
+      .contact-heading {{display:flex; align-items:center; flex-wrap:wrap; gap:.5rem; margin-bottom:.25rem;}}
+      .premium-badge {{display:inline-flex; align-items:center; gap:.2rem; padding:.15rem .45rem; border-radius:6px; background:linear-gradient(100deg,#ff315e,#ff8617); color:#fff; font-size:.68rem; font-weight:850; letter-spacing:.05em; white-space:nowrap;}}
       .contact-meta {{color:#a9bbcf; font-size:.84rem; margin-bottom:.7rem;}}
       .phone-row {{margin-top:.35rem; font-size:.88rem; line-height:1.65;}}
       .contact-line {{display:flex; align-items:center; flex-wrap:wrap; gap:.45rem; padding:.2rem 0; color:#e2eaf4;}}
@@ -95,6 +97,15 @@ def normalize_text(value: object) -> str:
     return text.strip(" -,")
 
 
+def is_premium_supplier(value: object) -> bool:
+    """Identifica parceiros premium pelos nomes definidos pela CompraStar."""
+    name = normalize_text(value)
+    return (
+        any(term in name for term in ("JOTA", "PLACAR", "CASTELO", "ANDINHO"))
+        or bool(re.search(r"\bPRO\b", name))
+    )
+
+
 def canonical_city(value: object) -> str | None:
     city = normalize_text(value)
     # Aceita entradas como "Criciúma - SC" ou "Criciúma, SC".
@@ -117,12 +128,17 @@ def load_partners() -> pd.DataFrame:
         raise FileNotFoundError(f"Arquivo de dados não encontrado: {DATA_FILE}")
     df = pd.read_csv(DATA_FILE, sep=";", dtype=str, keep_default_na=False, encoding="utf-8-sig")
     df.columns = [c.strip() for c in df.columns]
-    required = ["Nome", "Números", "Cidade", "DDD(s)", "UF provável pelo DDD", "Contatos"]
+    required = ["Nome", "Números", "Cidade", "DDD(s)", "UF provável pelo DDD", "Contatos", "Categoria"]
     for column in required:
         if column not in df.columns:
             df[column] = ""
         df[column] = df[column].astype(str).str.strip()
     df = df[df["Nome"].ne("") & df["Números"].ne("")].copy()
+    df["Categoria"] = df.apply(
+        lambda row: "Premium" if row["Categoria"].casefold() == "premium" or is_premium_supplier(row["Nome"]) else "Regular",
+        axis=1,
+    )
+    df["is_premium"] = df["Categoria"].eq("Premium")
     df["cidade_mapa"] = df["Cidade"].map(canonical_city)
     return df.reset_index(drop=True)
 
@@ -167,7 +183,10 @@ def is_whatsapp(international: str) -> bool:
 
 def parse_phones(raw: str, ddd: str = "") -> list[tuple[str, str]]:
     """Retorna números únicos já normalizados em formato internacional."""
-    parts = re.split(r"\s*/\s*|\s*;\s*|\s*,\s*|\n+", raw or "")
+    raw = raw or ""
+    # Alguns campos exportados trazem dois números internacionais separados apenas por espaço.
+    raw = re.sub(r"(?<=\d)\s+(?=\+?55\d{10,11}(?:\D|$))", " / ", raw)
+    parts = re.split(r"\s*/\s*|\s*;\s*|\s*,\s*|\n+", raw)
     output: list[tuple[str, str]] = []
     seen = set()
     for part in parts:
@@ -321,12 +340,18 @@ def resolve_search_city(query: str) -> tuple[float, float, str] | None:
 def city_popup_html(city_label: str, city_rows: pd.DataFrame) -> str:
     """Popup com os parceiros do município, evitando marcadores sobrepostos no mapa."""
     entries = []
-    for _, row in city_rows.sort_values("Nome", kind="stable").iterrows():
+    sorted_rows = city_rows.sort_values(["is_premium", "Nome"], ascending=[False, True], kind="stable")
+    for _, row in sorted_rows.iterrows():
         name = html.escape(str(row["Nome"]))
         phones = contact_links(row["Números"], row["DDD(s)"], row.get("Contatos", ""))
+        premium_badge = (
+            '<span style="display:inline-block;margin-left:6px;padding:2px 5px;border-radius:5px;'
+            'background:linear-gradient(100deg,#ff315e,#ff8617);color:#fff;font-size:9px;font-weight:800;letter-spacing:.04em;">★ PREMIUM</span>'
+            if bool(row.get("is_premium", False)) else ""
+        )
         entries.append(
             f'<div style="padding:9px 0;border-top:1px solid #344256;">'
-            f'<div style="font-weight:700;color:#f4f7fb;margin-bottom:5px;">{name}</div>'
+            f'<div style="font-weight:700;color:#f4f7fb;margin-bottom:5px;">{name}{premium_badge}</div>'
             f'<div style="font-size:12px;line-height:1.7;">{phones}</div></div>'
         )
     count = len(city_rows)
@@ -346,9 +371,10 @@ def render_contact_card(row: pd.Series, show_distance: bool = True) -> None:
     name = html.escape(row["Nome"])
     city = html.escape(row["Cidade"])
     phones = contact_links(row["Números"], row["DDD(s)"], row.get("Contatos", ""))
+    premium_badge = '<span class="premium-badge">★ PREMIUM</span>' if bool(row.get("is_premium", False)) else ""
     st.markdown(
         f'''<div class="contact-card">
-          <div class="contact-name">{name}</div>
+          <div class="contact-heading"><div class="contact-name">{name}</div>{premium_badge}</div>
           <div class="contact-meta">📍 {city}{distance_text}</div>
           <div class="phone-row">{phones}</div>
         </div>''',
@@ -405,7 +431,11 @@ if should_search:
                     distances.append(haversine_km(lat, lon, partner_lat, partner_lon))
                 mapped["distancia_km"] = distances
                 nearby = mapped[mapped["distancia_km"] <= radius].copy()
-                nearby = nearby.sort_values(["distancia_km", "Nome"], kind="stable").reset_index(drop=True)
+                nearby = nearby.sort_values(
+                    ["is_premium", "distancia_km", "Nome"],
+                    ascending=[False, True, True],
+                    kind="stable",
+                ).reset_index(drop=True)
                 canonical_key = resolve_city_prefix(city_query) or normalize_text(display_name)
                 completed_label = CITY_LABELS.get(canonical_key, display_name)
                 st.session_state["search_result"] = {
@@ -480,12 +510,14 @@ if result:
         count = len(city_rows)
         count_label = str(count) if count < 100 else "99+"
         is_reference = bool(reference_key and city_key == reference_key)
-        bg = "linear-gradient(135deg,#ff315e,#ff8617)" if is_reference else "linear-gradient(135deg,#ff9b2f,#ff7817)"
-        ring = "#fff2e7" if is_reference else "#ffffff"
+        has_premium = bool(city_rows["is_premium"].any())
+        bg = "linear-gradient(135deg,#ff315e,#ff8617)" if (is_reference or has_premium) else "linear-gradient(135deg,#29415f,#47627f)"
+        ring = "#fff2e7" if has_premium or is_reference else "#b4c6da"
         badge = f'''<div style="width:38px;height:38px;border-radius:50%;display:flex;align-items:center;justify-content:center;box-sizing:border-box;background:{bg};border:2px solid {ring};box-shadow:0 3px 10px rgba(15,23,42,.35);color:#ffffff;font-family:Arial,sans-serif;font-size:13px;font-weight:800;">{count_label}</div>'''
+        premium_note = " · inclui parceiro premium" if has_premium else ""
         folium.Marker(
             [partner_lat, partner_lon],
-            tooltip=f"{city_label} · {count} parceiro(s)",
+            tooltip=f"{city_label} · {count} parceiro(s){premium_note}",
             popup=folium.Popup(city_popup_html(city_label, city_rows), max_width=380, max_height=400),
             icon=folium.DivIcon(html=badge, icon_size=(38, 38), icon_anchor=(19, 19), class_name="comprastar-city-marker"),
         ).add_to(m)
