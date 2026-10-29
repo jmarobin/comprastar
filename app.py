@@ -29,24 +29,38 @@ st.set_page_config(
 st.markdown(
     """
     <style>
-      .block-container {padding-top: 1.7rem; padding-bottom: 2rem; max-width: 1500px;}
-      .hero {padding: 1.25rem 1.4rem; border-radius: 16px; background: linear-gradient(120deg,#0f3d56,#0e7490); color: white; margin-bottom: 1rem;}
-      .hero h1 {font-size: 1.8rem; line-height: 1.2; margin: 0 0 .35rem 0; color: white;}
-      .hero p {margin: 0; color: #e5f7fb; font-size: 1rem;}
-      .metric-box {border: 1px solid #d9e3ea; border-radius: 12px; padding: .8rem 1rem; min-height: 90px; background: #fff;}
-      .metric-label {font-size: .82rem; color: #526474; margin-bottom: .2rem;}
-      .metric-value {font-size: 1.55rem; font-weight: 700; color: #0f3d56;}
-      .contact-card {border: 1px solid #dce5eb; border-radius: 12px; padding: .85rem .9rem; margin-bottom: .7rem; background: white;}
-      .contact-name {font-weight: 700; color: #102a43; font-size: 1rem; margin-bottom: .2rem;}
-      .contact-meta {color: #607486; font-size: .85rem; margin-bottom: .5rem;}
-      .phone-row {margin-top: .3rem; font-size: .9rem; line-height: 1.5;}
-      .phone-row a {color: #087e8b; text-decoration: none; font-weight: 600; margin-right: .5rem;}
-      .small-note {font-size: .82rem; color: #526474;}
-      div[data-testid="stFormSubmitButton"] button {background:#0e7490; color:white; border:0; border-radius:8px; min-height:42px;}
+      header[data-testid="stHeader"], [data-testid="stToolbar"], [data-testid="stDecoration"],
+      #MainMenu, .stAppDeployButton {display:none !important; visibility:hidden !important; height:0 !important;}
+      footer {visibility:hidden !important; height:0 !important;}
+      .block-container {padding-top: 1.25rem; padding-bottom: 1.2rem; max-width: 1500px;}
+      .hero {padding: 1.35rem 1.5rem; border-radius: 18px; background: linear-gradient(120deg,#0b2228,#123d46 60%,#0b5f61); color: #f0fdfa; margin-bottom: 1.1rem; border: 1px solid #24545a; box-shadow: 0 12px 30px rgba(0,0,0,.18);}
+      .hero h1 {font-size: 1.9rem; line-height: 1.2; margin: 0 0 .4rem 0; color: #f0fdfa; letter-spacing: -.025em;}
+      .hero p {margin: 0; color: #b7e4df; font-size: 1rem;}
+      .metric-box {border: 1px solid #303944; border-radius: 14px; padding: .85rem 1rem; min-height: 90px; background: #151b23; box-shadow: 0 5px 18px rgba(0,0,0,.12);}
+      .metric-label {font-size: .82rem; color: #a7b3c2; margin-bottom: .25rem;}
+      .metric-value {font-size: 1.55rem; font-weight: 750; color: #50e3c2;}
+      .contact-card {border: 1px solid #303944; border-radius: 14px; padding: .95rem 1rem; margin-bottom: .7rem; background: linear-gradient(145deg,#171e27,#121820); box-shadow: 0 5px 16px rgba(0,0,0,.12);}
+      .contact-name {font-weight: 750; color: #f0f6fc; font-size: 1rem; margin-bottom: .25rem;}
+      .contact-meta {color: #9daab9; font-size: .84rem; margin-bottom: .7rem;}
+      .phone-row {margin-top: .35rem; font-size: .88rem; line-height: 1.65;}
+      .contact-line {display:flex; align-items:center; flex-wrap:wrap; gap:.45rem; padding:.2rem 0; color:#dce6f0;}
+      .contact-label {color:#b9c7d5; font-weight:600; margin-right:.15rem;}
+      .wa-link {display:inline-flex; align-items:center; gap:.25rem; padding:.27rem .6rem; border-radius:7px; color:#c6fff0 !important; background:#103c35; border:1px solid #24685c; text-decoration:none !important; font-weight:700; font-size:.82rem;}
+      .wa-link:hover {background:#175749; border-color:#45c5a4;}
+      .copy-number {display:inline-block; user-select:text; cursor:text; color:#e2e8f0; background:#242c36; border:1px solid #3d4856; border-radius:7px; padding:.28rem .55rem; font-family:ui-monospace,SFMono-Regular,Menlo,monospace; letter-spacing:.01em;}
+      .small-note {font-size: .82rem; color: #9daab9;}
+      div[data-testid="stFormSubmitButton"] button {background:#0d9488; color:white; border:1px solid #20b2a6; border-radius:10px; min-height:44px; font-weight:700;}
+      div[data-testid="stFormSubmitButton"] button:hover {background:#0f766e; border-color:#5eead4;}
+      div[data-baseweb="select"] > div {background:#151b23; border-color:#3a4552; border-radius:10px; min-height:44px;}
+      div[data-baseweb="input"] > div {background:#151b23; border-color:#3a4552; border-radius:10px;}
+      div[data-testid="stSlider"] label, div[data-testid="stSelectbox"] label {color:#dce6f0;}
+      div[data-testid="stExpander"] {border-color:#303944; border-radius:12px;}
+      .app-footer {margin-top:2rem; padding:1rem 0 .35rem; text-align:center; color:#718096; font-size:.82rem; border-top:1px solid #252d37;}
+      .app-footer strong {color:#a7b5c5; font-weight:700; letter-spacing:.05em;}
     </style>
     <div class="hero">
       <h1>📍 Localizador de Parceiros</h1>
-      <p>Digite uma cidade e encontre autopeças parceiras próximas, com telefone e atalho para contato.</p>
+      <p>Encontre autopeças próximas e abra o WhatsApp do contato em poucos cliques.</p>
     </div>
     """,
     unsafe_allow_html=True,
@@ -96,67 +110,137 @@ def load_partners() -> pd.DataFrame:
     return df.reset_index(drop=True)
 
 
+def normalize_phone(raw: str, ddd: str = "") -> str | None:
+    """Normaliza um telefone brasileiro para E.164 e corrige celulares antigos de 8 dígitos."""
+    digits = re.sub(r"\D", "", raw or "")
+    ddd_digits = re.sub(r"\D", "", ddd or "")[-2:]
+    if digits.startswith("55") and len(digits) in (12, 13):
+        local = digits[2:]
+    elif len(digits) in (10, 11):
+        local = digits
+    elif len(digits) in (8, 9) and len(ddd_digits) == 2:
+        local = ddd_digits + digits
+    else:
+        return None
+    # No Brasil, celulares antigos de 8 dígitos normalmente receberam o 9º dígito.
+    if len(local) == 10 and local[2] in "6789":
+        local = local[:2] + "9" + local[2:]
+    if len(local) not in (10, 11):
+        return None
+    return "55" + local
+
+
+def format_phone(international: str) -> str:
+    digits = re.sub(r"\D", "", international or "")
+    local = digits[2:] if digits.startswith("55") else digits
+    if len(local) not in (10, 11):
+        return international or "Número não informado"
+    ddd, subscriber = local[:2], local[2:]
+    if len(subscriber) == 9:
+        return f"({ddd}) {subscriber[:5]}-{subscriber[5:]}"
+    return f"({ddd}) {subscriber[:4]}-{subscriber[4:]}"
+
+
+def is_whatsapp(international: str) -> bool:
+    """Só oferece WhatsApp para números com padrão de celular brasileiro."""
+    digits = re.sub(r"\D", "", international or "")
+    local = digits[2:] if digits.startswith("55") else digits
+    return len(local) == 11 and local[2] == "9"
+
+
 def parse_phones(raw: str, ddd: str = "") -> list[tuple[str, str]]:
-    """Retorna pares (rótulo, número em formato internacional quando possível)."""
-    parts = re.split(r"\s*/\s*|;|\s+(?=\+\d)", raw or "")
+    """Retorna números únicos já normalizados em formato internacional."""
+    parts = re.split(r"\s*/\s*|\s*;\s*|\s*,\s*|\n+", raw or "")
     output: list[tuple[str, str]] = []
     seen = set()
-    ddd_digits = re.sub(r"\D", "", ddd or "")
     for part in parts:
-        digits = re.sub(r"\D", "", part)
-        if len(digits) < 8:
-            continue
-        international = digits
-        if digits.startswith("55") and len(digits) in (12, 13):
-            international = digits
-        elif len(digits) in (10, 11):
-            international = "55" + digits
-        elif len(digits) in (8, 9) and ddd_digits[:2].isdigit():
-            international = "55" + ddd_digits[:2] + digits
-        label = part.strip() or digits
-        if international not in seen:
-            output.append((label, international))
+        international = normalize_phone(part.strip(), ddd)
+        if international and international not in seen:
+            output.append((part.strip(), international))
             seen.add(international)
     return output
 
 
-def contact_links(raw_phone: str, ddd: str = "", contacts_raw: str = "") -> str:
-    # Para redes com múltiplos contatos, a base informa "Nome: número; Nome: número".
+def extract_contact_phones(raw_phone: str, ddd: str = "", contacts_raw: str = "") -> list[tuple[str, str]]:
+    """Lista pares contato/telefone, removendo repetição do mesmo número em toda a ficha."""
+    output: list[tuple[str, str]] = []
+    seen_numbers = set()
     if contacts_raw.strip():
-        links = []
-        for entry in contacts_raw.split(";"):
+        entries = contacts_raw.split(";")
+        for entry in entries:
             entry = entry.strip()
             if not entry:
                 continue
             if ":" in entry:
                 contact_name, raw_number = entry.split(":", 1)
+                contact_name = contact_name.strip() or "Contato"
             else:
                 contact_name, raw_number = "Contato", entry
-            contact_name = html.escape(contact_name.strip())
             parsed = parse_phones(raw_number.strip(), ddd)
             if not parsed:
-                links.append(f"<strong>{contact_name}</strong>: {html.escape(raw_number.strip())}")
+                output.append((contact_name, raw_number.strip()))
                 continue
-            for original, international in parsed:
-                number_label = html.escape(original.strip())
-                links.append(
-                    f'<strong>{contact_name}</strong>: '
-                    f'<a href="tel:+{international}">📞 {number_label}</a>'
-                )
-                if international.startswith("55") and len(international) in (12, 13):
-                    links.append(f'<a href="https://wa.me/{international}" target="_blank" rel="noopener">WhatsApp</a>')
-        return "<br>".join(links) if links else f'<span>{html.escape(raw_phone or "Número não informado")}</span>'
+            for _, international in parsed:
+                if international not in seen_numbers:
+                    output.append((contact_name, international))
+                    seen_numbers.add(international)
+        return output
 
-    phones = parse_phones(raw_phone, ddd)
-    if not phones:
-        return f'<span>{html.escape(raw_phone or "Número não informado")}</span>'
-    links = []
-    for original, international in phones:
-        label = html.escape(original)
-        links.append(f'<a href="tel:+{international}">📞 {label}</a>')
-        if international.startswith("55") and len(international) in (12, 13):
-            links.append(f'<a href="https://wa.me/{international}" target="_blank" rel="noopener">WhatsApp</a>')
-    return "<br>".join(links)
+    for _, international in parse_phones(raw_phone, ddd):
+        if international not in seen_numbers:
+            output.append(("Contato", international))
+            seen_numbers.add(international)
+    if not output and raw_phone.strip():
+        output.append(("Contato", raw_phone.strip()))
+    return output
+
+
+def contact_links(raw_phone: str, ddd: str = "", contacts_raw: str = "") -> str:
+    """Exibe apenas link de WhatsApp para celular; outros telefones ficam como texto copiável."""
+    contacts = extract_contact_phones(raw_phone, ddd, contacts_raw)
+    if not contacts:
+        return '<span class="copy-number">Número não informado</span>'
+
+    grouped: dict[str, list[str]] = {}
+    seen_numbers = set()
+    for contact_name, value in contacts:
+        if value and not value.isdigit() and normalize_phone(value, ddd) is None:
+            phone_item = f'<span class="copy-number">{html.escape(value)}</span>'
+            normalized = None
+        else:
+            normalized = value if value.startswith("55") and len(value) in (12, 13) else normalize_phone(value, ddd)
+            if not normalized:
+                phone_item = f'<span class="copy-number">{html.escape(value)}</span>'
+            elif normalized in seen_numbers:
+                continue
+            elif is_whatsapp(normalized):
+                phone_item = f'<a class="wa-link" style="display:inline-block;padding:4px 8px;border-radius:7px;background:#103c35;color:#c6fff0;text-decoration:none;border:1px solid #24685c;font-weight:700;font-size:12px" href="https://wa.me/{normalized}" target="_blank" rel="noopener noreferrer" aria-label="Abrir WhatsApp de {html.escape(contact_name)}">WhatsApp ↗</a>'
+                seen_numbers.add(normalized)
+            else:
+                phone_item = f'<span class="copy-number" title="Selecione e copie este número">{html.escape(format_phone(normalized))}</span>'
+                seen_numbers.add(normalized)
+        grouped.setdefault(contact_name or "Contato", []).append(phone_item)
+
+    lines = []
+    for name, items in grouped.items():
+        safe_name = html.escape(name)
+        # Se a mesma pessoa tem mais de um WhatsApp, diferencie os atalhos sem exibir os números.
+        wa_total = sum('class="wa-link"' in item for item in items)
+        wa_index = 0
+        rendered_items = []
+        for item in items:
+            if 'class="wa-link"' in item:
+                wa_index += 1
+                if wa_total > 1:
+                    item = item.replace('>WhatsApp ↗</a>', f'>WhatsApp {wa_index} ↗</a>')
+            rendered_items.append(item)
+        # Sem rótulo repetido quando não existe nome individual na base.
+        if name == "Contato" and len(grouped) == 1:
+            lines.append(f'<div class="contact-line">{" ".join(rendered_items)}</div>')
+        else:
+            lines.append(f'<div class="contact-line"><span class="contact-label">{safe_name}</span> {" ".join(rendered_items)}</div>')
+    return "".join(lines)
+
 
 
 @st.cache_data(ttl=60 * 60 * 24 * 30, show_spinner=False)
@@ -188,10 +272,9 @@ def popup_html(row: pd.Series, distance: float) -> str:
     city = html.escape(row["Cidade"])
     phones = contact_links(row["Números"], row["DDD(s)"], row.get("Contatos", ""))
     return f"""
-    <div style="font-family:Arial,sans-serif;min-width:210px;max-width:290px;color:#102a43">
-      <div style="font-weight:700;font-size:15px;margin-bottom:5px">{name}</div>
-      <div style="font-size:12px;color:#526474;margin-bottom:7px">📍 {city} · {distance:.1f} km</div>
-      <div style="font-size:12px;font-weight:700;margin-bottom:4px">Contato</div>
+    <div style="font-family:Arial,sans-serif;min-width:210px;max-width:290px;background:#121820;color:#e6edf3;padding:4px">
+      <div style="font-weight:700;font-size:15px;margin-bottom:5px;color:#f0f6fc">{name}</div>
+      <div style="font-size:12px;color:#9daab9;margin-bottom:7px">📍 {city} · {distance:.1f} km</div>
       <div style="font-size:12px;line-height:1.7">{phones}</div>
     </div>
     """
@@ -221,17 +304,23 @@ except Exception as exc:
 with st.form("buscar_parceiros", clear_on_submit=False):
     form_left, form_right = st.columns([4, 1])
     with form_left:
-        city_query = st.text_input(
+        city_options = sorted(set(CITY_LABELS.values()), key=lambda value: value.casefold())
+        city_query = st.selectbox(
             "Cidade de referência",
-            placeholder="Ex.: Criciúma, SC",
-            help="Digite o nome da cidade. Se ela não estiver na lista de parceiros, o sistema tentará localizar o município no Brasil.",
+            options=city_options,
+            index=None,
+            placeholder="Digite uma cidade… (ex.: Itajaí)",
+            accept_new_options=True,
+            filter_mode="fuzzy",
+            help="Comece a digitar para ver sugestões. Ex.: ao digitar ‘itaj’, escolha ‘Itajaí’. Também é possível informar outra cidade brasileira.",
+            key="city_autocomplete",
         )
     with form_right:
         radius = st.slider("Raio de busca (km)", min_value=25, max_value=100, value=100, step=25)
     submitted = st.form_submit_button("Buscar parceiros próximos", use_container_width=True)
 
 if submitted:
-    if not city_query.strip():
+    if not city_query or not city_query.strip():
         st.session_state.pop("search_result", None)
         st.warning("Digite o nome de uma cidade para iniciar a busca.")
     else:
@@ -278,13 +367,13 @@ if result:
         with col:
             st.markdown(f'<div class="metric-box"><div class="metric-label">{label}</div><div class="metric-value">{value}</div></div>', unsafe_allow_html=True)
 
-    m = folium.Map(location=[lat, lon], zoom_start=8, control_scale=True, tiles="OpenStreetMap")
+    m = folium.Map(location=[lat, lon], zoom_start=8, control_scale=True, tiles="CartoDB dark_matter")
     folium.Circle(
         location=[lat, lon],
         radius=radius_used * 1000,
-        color="#0E7490",
+        color="#31d6b4",
         fill=True,
-        fill_color="#0E7490",
+        fill_color="#31d6b4",
         fill_opacity=0.06,
         weight=2,
         tooltip=f"Raio de {radius_used} km",
@@ -304,7 +393,7 @@ if result:
             [partner_lat, partner_lon],
             tooltip=f"{row['Nome']} — {row['Cidade']}",
             popup=folium.Popup(popup_html(row, float(row["distancia_km"])), max_width=320),
-            icon=folium.Icon(color="blue", icon="wrench", prefix="fa"),
+            icon=folium.Icon(color="green", icon="wrench", prefix="fa"),
         ).add_to(marker_cluster)
 
     if not nearby.empty:
@@ -330,10 +419,9 @@ if result:
 
     if not nearby.empty:
         with st.expander("Ver lista completa dos parceiros encontrados"):
-            display = nearby[["Nome", "Cidade", "Números", "Contatos", "distancia_km"]].copy()
-            display["Contato(s)"] = display["Contatos"].where(display["Contatos"].str.strip().ne(""), display["Números"])
+            display = nearby[["Nome", "Cidade", "distancia_km"]].copy()
             display["distancia_km"] = display["distancia_km"].map(lambda x: f"{x:.1f} km")
-            display = display[["Nome", "Cidade", "Contato(s)", "distancia_km"]].rename(columns={"Nome": "Autopeça", "distancia_km": "Distância aproximada"})
+            display = display.rename(columns={"Nome": "Autopeça", "distancia_km": "Distância aproximada"})
             st.dataframe(display, use_container_width=True, hide_index=True)
 
     st.markdown('<p class="small-note">As distâncias são aproximadas, em linha reta entre os centros dos municípios. Não representam quilometragem rodoviária nem o endereço exato da autopeça.</p>', unsafe_allow_html=True)
@@ -342,14 +430,17 @@ if result:
     if not unmapped.empty:
         with st.expander(f"Cadastros que precisam de revisão de cidade ({len(unmapped)})"):
             st.caption("Esses cadastros não entram no cálculo porque a cidade está escrita como uma lista de municípios ou não foi reconhecida. Corrija o campo Cidade no arquivo data/parceiros.csv para incluí-los no mapa.")
-            cols = ["Nome", "Cidade", "Números", "DDD(s)", "UF provável pelo DDD", "Contatos"]
-            st.dataframe(unmapped[cols].rename(columns={"Nome": "Autopeça", "Números": "Contato", "DDD(s)": "DDD", "UF provável pelo DDD": "UF provável"}), use_container_width=True, hide_index=True)
+            cols = ["Nome", "Cidade", "DDD(s)", "UF provável pelo DDD"]
+            st.dataframe(unmapped[cols].rename(columns={"Nome": "Autopeça", "DDD(s)": "DDD", "UF provável pelo DDD": "UF provável"}), use_container_width=True, hide_index=True)
 else:
     st.markdown("### Como usar")
-    st.markdown("Digite uma cidade acima e clique em **Buscar parceiros próximos**. O mapa mostrará a cidade de referência, o raio selecionado e os marcadores das autopeças encontradas.")
+    st.markdown("Digite ou escolha uma cidade nas sugestões e clique em **Buscar parceiros próximos**. O mapa mostrará a cidade de referência, o raio selecionado e os marcadores das autopeças encontradas.")
     st.markdown("<p class='small-note'>Dica: nomes de cidades sem acento também são aceitos. A primeira versão usa a lista de parceiros que veio na planilha enviada.</p>", unsafe_allow_html=True)
 
 with st.expander("Sobre a base de contatos"):
-    st.write(f"A base carregada contém **{len(partners)} contatos**. Somente registros com cidade reconhecida entram no mapa. Alguns cadastros podem precisar de correção manual antes de aparecer na busca.")
+    st.write(f"A base carregada contém **{len(partners)} fichas de parceiros**. Somente registros com cidade reconhecida entram no mapa. Alguns cadastros podem precisar de correção manual antes de aparecer na busca.")
     st.write("Os marcadores representam o centro aproximado do município cadastrado; não indicam o endereço exato da empresa.")
     st.write("A lista de contatos fica no arquivo `data/parceiros.csv`, que pode ser atualizado no GitHub quando houver novos parceiros ou mudanças nos telefones.")
+
+
+st.markdown('<div class="app-footer">powered by <strong>Marobin Group</strong></div>', unsafe_allow_html=True)

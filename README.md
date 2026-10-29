@@ -51,3 +51,12 @@ A coluna **Cidade** deve conter preferencialmente um único município por regis
 - Para cidades que não estão na lista de coordenadas usada pela base, a aplicação tenta consultar o serviço público Nominatim/OpenStreetMap. Essa função depende de conexão à internet.
 - Se o app ficar público, os dados de contato que aparecem nele poderão ser vistos por quem tiver acesso ao app. Revise as configurações de acesso e a autorização para compartilhar os telefones antes de publicar.
 - A base foi reorganizada a partir da planilha recebida: CJ e Krambeck aparecem em cada cidade informada; Jota e Jota Joel foram consolidados; Padova foi corrigida para Arvoredo. As coordenadas são aproximadas do centro dos municípios, não o endereço exato das lojas.
+
+### Ajustes recentes do layout e contatos
+
+- Tema escuro, mapa escuro e barra superior do Streamlit ocultada no layout.
+- Busca de cidades com autocomplete fuzzy (por exemplo, `itaj` sugere `Itajaí`) e opção de digitar uma cidade não listada.
+- Links do WhatsApp aparecem para números com padrão de celular brasileiro. Telefones fixos ou outros números sem padrão de WhatsApp ficam em texto selecionável para copiar.
+- Números duplicados na mesma ficha são normalizados, inclusive variantes antigas de celular com 8 dígitos.
+- Rodapé `Powered by Marobin Group`.
+- A lista de parceiros mostra cidade e distância; os telefones são apresentados nas fichas, evitando expor números repetidos na tabela.
