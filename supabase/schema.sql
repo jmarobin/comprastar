@@ -96,7 +96,8 @@ from public.supplier_ratings
 group by supplier_key;
 
 revoke all on table public.supplier_rating_summary from anon, public;
-grant select on table public.supplier_rating_summary to authenticated;
+-- Public sees only aggregated averages and counts, never individual votes or user IDs.
+grant select on table public.supplier_rating_summary to anon, authenticated;
 
 comment on table public.supplier_ratings is
     'Uma nota ativa por comprador e fornecedor. Atualizações substituem a nota existente.';

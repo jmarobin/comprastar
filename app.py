@@ -54,13 +54,14 @@ st.markdown(
       .metric-value {{font-size:1.55rem; font-weight:750; color:#ff8a1c;}}
       .contact-card {{border:1px solid #243955; border-radius:14px; padding:.95rem 1rem; margin-bottom:.7rem; background:linear-gradient(145deg,#102039,#0b1728); box-shadow:0 5px 16px rgba(0,0,0,.16);}}
       .contact-name {{font-weight:750; color:#f4f7fb; font-size:1rem; margin-bottom:.25rem;}}
-      .contact-heading {{display:flex; align-items:center; flex-wrap:wrap; gap:.5rem; margin-bottom:.25rem;}}
+      .contact-heading {{display:flex; align-items:center; flex-wrap:wrap; gap:.48rem; margin-bottom:.42rem;}}
+      .contact-name {{font-weight:750; color:#f4f7fb; font-size:1rem; margin:0;}}
       .premium-badge {{display:inline-flex; align-items:center; gap:.2rem; padding:.15rem .45rem; border-radius:6px; background:linear-gradient(100deg,#ff315e,#ff8617); color:#fff; font-size:.68rem; font-weight:850; letter-spacing:.05em; white-space:nowrap;}}
       .contact-meta {{color:#a9bbcf; font-size:.84rem; margin-bottom:.7rem;}}
-      .rating-summary {{display:flex;align-items:center;gap:.45rem;flex-wrap:wrap;color:#d8e3f1;font-size:.84rem;margin:.15rem 0 .45rem;}}
-      .rating-score {{color:#ff9a26;font-weight:850;font-size:.96rem;}}
-      .rating-stars {{color:#ff9a26;letter-spacing:.04em;}}
-      .rating-count {{color:#92a7bf;font-size:.78rem;}}
+      .rating-inline {{display:inline-flex; align-items:center; gap:.28rem; flex-wrap:wrap; color:#d8e3f1; font-size:.78rem; padding:.18rem .45rem; border-radius:7px; border:1px solid #3d4051; background:#0a1728; white-space:nowrap;}}
+      .rating-score {{color:#ff9a26;font-weight:850;font-size:.82rem;}}
+      .rating-stars {{color:#ff9a26;letter-spacing:.035em;}}
+      .rating-count {{color:#a8bad0;font-size:.72rem;}}
       .phone-row {{margin-top:.35rem; font-size:.88rem; line-height:1.65;}}
       .contact-line {{display:flex; align-items:center; flex-wrap:wrap; gap:.45rem; padding:.2rem 0; color:#e2eaf4;}}
       .contact-label {{color:#bfd0e3; font-weight:600; margin-right:.15rem;}}
@@ -403,8 +404,13 @@ def resolve_search_city(query: str) -> tuple[float, float, str] | None:
     return None
 
 
-def city_popup_html(city_label: str, city_rows: pd.DataFrame) -> str:
-    """Popup com os parceiros do município, evitando marcadores sobrepostos no mapa."""
+def city_popup_html(
+    city_label: str,
+    city_rows: pd.DataFrame,
+    rating_summary: dict | None = None,
+    ratings_ready: bool = False,
+) -> str:
+    """Popup com parceiros e suas médias, sem expor avaliações individuais."""
     entries = []
     sorted_rows = city_rows.sort_values(["is_premium", "Nome"], ascending=[False, True], kind="stable")
     for _, row in sorted_rows.iterrows():
@@ -415,9 +421,24 @@ def city_popup_html(city_label: str, city_rows: pd.DataFrame) -> str:
             'background:linear-gradient(100deg,#ff315e,#ff8617);color:#fff;font-size:9px;font-weight:800;letter-spacing:.04em;">★ PREMIUM</span>'
             if bool(row.get("is_premium", False)) else ""
         )
+        supplier_key = str(row.get("supplier_key") or supplier_key_for_row(row))
+        stats = (rating_summary or {}).get(supplier_key, {})
+        rating_badge = ""
+        if ratings_ready:
+            total = int(stats.get("rating_count", 0))
+            if total:
+                avg = float(stats.get("average_rating", 0))
+                rounded = max(0, min(5, int(round(avg))))
+                stars = "★" * rounded + "☆" * (5 - rounded)
+                rating_badge = (
+                    f'<span style="display:inline-block;margin-left:6px;color:#ff9a26;font-size:11px;white-space:nowrap;">'
+                    f'{stars} {avg:.1f} ({total})</span>'
+                )
+            else:
+                rating_badge = '<span style="display:inline-block;margin-left:6px;color:#91a4bd;font-size:10px;white-space:nowrap;">☆☆☆☆☆ (0)</span>'
         entries.append(
             f'<div style="padding:9px 0;border-top:1px solid #344256;">'
-            f'<div style="font-weight:700;color:#f4f7fb;margin-bottom:5px;">{name}{premium_badge}</div>'
+            f'<div style="font-weight:700;color:#f4f7fb;margin-bottom:5px;">{name}{premium_badge}{rating_badge}</div>'
             f'<div style="font-size:12px;line-height:1.7;">{phones}</div></div>'
         )
     count = len(city_rows)
@@ -448,30 +469,33 @@ def render_contact_card(
     phones = contact_links(row["Números"], row["DDD(s)"], row.get("Contatos", ""), row.get("WhatsApp(s)", ""))
     premium_badge = '<span class="premium-badge">★ PREMIUM</span>' if bool(row.get("is_premium", False)) else ""
     supplier_key = str(row.get("supplier_key") or supplier_key_for_row(row))
-    stats = (rating_summary or {}).get(supplier_key)
+    stats = (rating_summary or {}).get(supplier_key, {})
     rating_html = ""
-    if ratings_ready and user is not None:
-        if stats and int(stats.get("rating_count", 0)) > 0:
+    if ratings_ready:
+        count = int(stats.get("rating_count", 0))
+        if count > 0:
             avg = float(stats.get("average_rating", 0))
-            count = int(stats.get("rating_count", 0))
-            rounded = max(0, min(5, round(avg)))
+            rounded = max(0, min(5, int(round(avg))))
             stars = "★" * rounded + "☆" * (5 - rounded)
             rating_html = (
-                f'<div class="rating-summary"><span class="rating-score">{avg:.1f}/5</span>'
-                f'<span class="rating-stars">{stars}</span><span class="rating-count">{count} avaliação(ões)</span></div>'
+                f'<div class="rating-inline" title="Média de {avg:.1f} em 5, baseada em {count} avaliação(ões)">'
+                f'<span class="rating-stars">{stars}</span>'
+                f'<span class="rating-score">{avg:.1f}</span>'
+                f'<span class="rating-count">({count} avaliações)</span></div>'
             )
         else:
-            rating_html = '<div class="rating-summary"><span class="rating-stars">☆☆☆☆☆</span><span class="rating-count">Ainda sem avaliações</span></div>'
-    elif user is None and login_available:
-        rating_html = '<div class="rating-summary"><span class="rating-count">🔒 Entre para avaliar e ver as notas</span></div>'
+            rating_html = (
+                '<div class="rating-inline" title="Este fornecedor ainda não recebeu avaliações">'
+                '<span class="rating-stars">☆☆☆☆☆</span>'
+                '<span class="rating-count">(0 avaliações)</span></div>'
+            )
 
-    # Use st.html for this nested card markup. st.markdown may treat the dynamically
-    # generated contact_links HTML as literal text in some Streamlit builds.
+    # Rating summary is placed alongside the supplier name for quick scanning.
+    # Contact links use st.html so Streamlit does not render HTML as literal text.
     st.html(
         f'''<div class="contact-card">
-          <div class="contact-heading"><div class="contact-name">{name}</div>{premium_badge}</div>
+          <div class="contact-heading"><div class="contact-name">{name}</div>{premium_badge}{rating_html}</div>
           <div class="contact-meta">📍 {city}{distance_text}</div>
-          {rating_html}
           <div class="phone-row">{phones}</div>
         </div>''',
     )
@@ -519,7 +543,7 @@ def render_rating_widget(row: pd.Series, supabase_client, user, own_ratings: dic
 
 
 def get_supabase_config() -> tuple[str, str]:
-    """Lê apenas a chave pública do Supabase via Streamlit Secrets; nunca usa service_role."""
+    """Lê somente a URL e a chave pública do Supabase pelos Streamlit Secrets."""
     try:
         config = st.secrets.get("supabase", {})
         url = str(config.get("url", "")).strip()
@@ -529,28 +553,50 @@ def get_supabase_config() -> tuple[str, str]:
         return "", ""
 
 
+def get_allowed_emails() -> set[str]:
+    """Lista fechada de e-mails autorizados, mantida em Secrets fora do repositório."""
+    try:
+        access_config = st.secrets.get("access", {})
+        values = access_config.get("allowed_emails", [])
+        if isinstance(values, str):
+            values = [values]
+        return {str(value).strip().casefold() for value in values if str(value).strip()}
+    except Exception:
+        return set()
+
+
 def clear_login_state() -> None:
     for state_key in ("sb_access_token", "sb_refresh_token", "sb_user_email", "sb_user_id"):
         st.session_state.pop(state_key, None)
 
 
 def render_auth_panel():
-    """Login individual de compradores. Os cadastros são criados pelo administrador no Supabase."""
+    """Exige login antes de permitir acesso ao localizador ou às avaliações."""
     url, anon_key = get_supabase_config()
+    allowed_emails = get_allowed_emails()
+
     if not url or not anon_key:
-        with st.expander("Ativar avaliações compartilhadas", expanded=False):
-            st.write(
-                "Para salvar notas entre usuários, configure um projeto Supabase, execute "
-                "`supabase/schema.sql` e adicione `url` e `anon_key` em Secrets. Veja o README."
-            )
+        st.error("O CompraStar está bloqueado até configurar a autenticação do Supabase.")
+        st.markdown(
+            "Em **Streamlit Community Cloud → App settings → Secrets**, configure `[supabase]` com `url` e `anon_key`, "
+            "e `[access]` com a lista de e-mails autorizados. Veja `README.md`."
+        )
+        return None, None, False, False
+
+    if not allowed_emails:
+        st.error("O acesso está bloqueado porque ainda não há e-mails autorizados configurados.")
+        st.markdown(
+            "Adicione `allowed_emails` na seção `[access]` dos Secrets do Streamlit. "
+            "Somente compradores e gestores listados ali poderão entrar."
+        )
         return None, None, False, False
 
     try:
         from supabase import create_client
         client = create_client(url, anon_key)
     except Exception:
-        st.warning("Não foi possível inicializar o serviço de avaliações. Confira a dependência `supabase` e as configurações.")
-        return None, None, True, False
+        st.error("Não foi possível inicializar a autenticação. Confira a dependência `supabase` e os Secrets.")
+        return None, None, False, False
 
     user = None
     access_token = st.session_state.get("sb_access_token")
@@ -560,17 +606,28 @@ def render_auth_panel():
             client.auth.set_session(access_token, refresh_token)
             client.auth.get_session()
             user_response = client.auth.get_user()
-            session = client.auth.get_session()  # persiste tokens caso o SDK tenha renovado a sessão
+            session = client.auth.get_session()
             user = getattr(user_response, "user", None)
             if user is None and session is not None:
                 user = getattr(session, "user", None)
             if user is None:
-                raise RuntimeError("Sessão não possui usuário válido")
-            if session is not None:
-                st.session_state["sb_access_token"] = session.access_token
-                st.session_state["sb_refresh_token"] = session.refresh_token
-            st.session_state["sb_user_id"] = str(user.id)
-            st.session_state["sb_user_email"] = getattr(user, "email", "") or "Comprador autenticado"
+                raise RuntimeError("Sessão sem usuário válido")
+
+            user_email = (getattr(user, "email", "") or "").strip().casefold()
+            if user_email not in allowed_emails:
+                try:
+                    client.auth.sign_out()
+                except Exception:
+                    pass
+                clear_login_state()
+                st.error("Esta conta não está autorizada a usar o CompraStar. Procure um gestor.")
+                user = None
+            else:
+                if session is not None:
+                    st.session_state["sb_access_token"] = session.access_token
+                    st.session_state["sb_refresh_token"] = session.refresh_token
+                st.session_state["sb_user_id"] = str(user.id)
+                st.session_state["sb_user_email"] = user_email
         except Exception:
             clear_login_state()
             user = None
@@ -579,7 +636,7 @@ def render_auth_panel():
         c1, c2 = st.columns([5, 1])
         with c1:
             email_label = html.escape(st.session_state.get("sb_user_email", "comprador"))
-            st.caption(f"Avaliações ativadas · conectado como **{email_label}**")
+            st.caption(f"Sessão autenticada · **{email_label}**")
         with c2:
             if st.button("Sair", key="sb_logout", use_container_width=True):
                 try:
@@ -590,32 +647,46 @@ def render_auth_panel():
                 st.rerun()
         return client, user, True, True
 
-    with st.expander("Entrar para avaliar fornecedores", expanded=False):
-        st.caption("Use o acesso individual fornecido pela administração. Não há cadastro público.")
-        with st.form("supplier_rating_login", clear_on_submit=False):
-            email = st.text_input("E-mail do comprador", autocomplete="email")
-            password = st.text_input("Senha", type="password", autocomplete="current-password")
-            login_submitted = st.form_submit_button("Entrar", use_container_width=True)
-        if login_submitted:
+    st.markdown("## Acesso restrito")
+    st.caption("Entre com o e-mail corporativo autorizado para acessar o localizador e avaliar fornecedores.")
+    with st.form("supplier_rating_login", clear_on_submit=False):
+        email = st.text_input("E-mail corporativo", autocomplete="email")
+        password = st.text_input("Senha", type="password", autocomplete="current-password")
+        login_submitted = st.form_submit_button("Entrar no CompraStar", use_container_width=True)
+
+    if login_submitted:
+        normalized_email = email.strip().casefold()
+        if normalized_email not in allowed_emails:
+            st.error("Este e-mail não está autorizado. Use um acesso cadastrado pela gestão.")
+        else:
             try:
-                auth_response = client.auth.sign_in_with_password({"email": email.strip(), "password": password})
+                auth_response = client.auth.sign_in_with_password(
+                    {"email": email.strip(), "password": password}
+                )
                 session = getattr(auth_response, "session", None)
                 user = getattr(auth_response, "user", None)
-                if session is None or user is None:
-                    st.error("Não foi possível iniciar a sessão. Confira o e-mail e a senha.")
+                signed_email = (getattr(user, "email", "") or "").strip().casefold() if user else ""
+                if session is None or user is None or signed_email not in allowed_emails:
+                    try:
+                        client.auth.sign_out()
+                    except Exception:
+                        pass
+                    clear_login_state()
+                    st.error("Não foi possível iniciar a sessão. Confira o acesso ou procure um gestor.")
                 else:
                     st.session_state["sb_access_token"] = session.access_token
                     st.session_state["sb_refresh_token"] = session.refresh_token
                     st.session_state["sb_user_id"] = str(user.id)
-                    st.session_state["sb_user_email"] = getattr(user, "email", "") or email.strip()
+                    st.session_state["sb_user_email"] = signed_email
                     st.rerun()
             except Exception:
-                st.error("E-mail ou senha inválidos, ou usuário ainda não habilitado. Procure a administração.")
+                st.error("E-mail ou senha inválidos, ou usuário ainda não habilitado. Procure a gestão.")
+
     return client, None, True, False
 
 
-def load_rating_data(supabase_client, user) -> tuple[dict, dict]:
-    """Carrega médias agregadas e apenas as avaliações do usuário autenticado."""
+def load_rating_summary(supabase_client) -> dict:
+    """Carrega apenas a média e a quantidade pública de avaliações por fornecedor."""
     summary_response = (
         supabase_client.table("supplier_rating_summary")
         .select("supplier_key,average_rating,rating_count,supplier_name")
@@ -628,34 +699,45 @@ def load_rating_data(supabase_client, user) -> tuple[dict, dict]:
             "average_rating": float(item.get("average_rating") or 0),
             "rating_count": int(item.get("rating_count") or 0),
         }
+    return summary
+
+
+def load_own_ratings(supabase_client, user) -> dict:
+    """Carrega apenas as avaliações pertencentes ao comprador autenticado."""
     mine_response = (
         supabase_client.table("supplier_ratings")
         .select("supplier_key,rating")
         .eq("user_id", str(user.id))
         .execute()
     )
-    own_ratings = {
+    return {
         str(item["supplier_key"]): int(item["rating"])
         for item in (mine_response.data or [])
     }
-    return summary, own_ratings
 
 
 supabase_client, logged_user, supabase_configured, is_logged_in = render_auth_panel()
+# Falha fechada: não carregamos parceiros, mapa, telefones ou formulários de avaliação
+# se o Supabase não estiver configurado ou se não houver uma sessão autenticada.
+if not supabase_configured or supabase_client is None or not is_logged_in or logged_user is None:
+    st.stop()
+
 rating_summary: dict = {}
 own_ratings: dict = {}
 ratings_ready = False
-if is_logged_in and logged_user is not None and supabase_client is not None:
+if supabase_configured and supabase_client is not None:
     try:
-        rating_summary, own_ratings = load_rating_data(supabase_client, logged_user)
+        # The database view exposes averages/counts only, so everyone can see supplier reputation.
+        # Individual ratings remain protected by RLS and are queried only for the logged-in user.
+        rating_summary = load_rating_summary(supabase_client)
         ratings_ready = True
+        if is_logged_in and logged_user is not None:
+            own_ratings = load_own_ratings(supabase_client, logged_user)
     except Exception:
         st.warning(
-            "O acesso foi validado, mas o banco de avaliações ainda não está pronto. "
-            "Confirme se o arquivo `supabase/schema.sql` foi executado no projeto Supabase."
+            "Não foi possível carregar as notas dos fornecedores. No Supabase, execute o conteúdo de "
+            "`supabase/enable_public_rating_summary.sql` para liberar apenas a média e a quantidade de avaliações."
         )
-elif supabase_configured and not is_logged_in:
-    st.caption("Entre com seu acesso de comprador para consultar as notas e avaliar os fornecedores.")
 
 try:
     partners = load_partners()
@@ -851,7 +933,7 @@ if result:
         folium.Marker(
             [partner_lat, partner_lon],
             tooltip=f"{city_label} · {count} parceiro(s){premium_note}",
-            popup=folium.Popup(city_popup_html(city_label, city_rows), max_width=380, max_height=400),
+            popup=folium.Popup(city_popup_html(city_label, city_rows, rating_summary, ratings_ready), max_width=380, max_height=400),
             icon=folium.DivIcon(html=badge, icon_size=(38, 38), icon_anchor=(19, 19), class_name="comprastar-city-marker"),
         ).add_to(m)
 
@@ -920,7 +1002,7 @@ if result:
             st.dataframe(unmapped[cols].rename(columns={"Nome": "Autopeça", "DDD(s)": "DDD", "UF provável pelo DDD": "UF provável"}), use_container_width=True, hide_index=True)
 else:
     st.markdown("### Como usar")
-    st.markdown("Digite a cidade e pressione Enter. Depois, navegue entre os parceiros encontrados no mapa e na lista ao lado.")
+    st.markdown("Digite a cidade e pressione Enter. Depois, navegue entre os parceiros encontrados no mapa e na lista ao lado. Quando o banco de avaliações estiver conectado, a média em estrelas e o total de notas aparecerão ao lado do nome de cada fornecedor.")
 
 with st.expander("Sobre a base de contatos"):
     st.write(f"A base carregada contém **{len(partners)} fichas de parceiros**. Somente registros com cidade reconhecida entram no mapa. Alguns cadastros podem precisar de correção manual antes de aparecer na busca.")
