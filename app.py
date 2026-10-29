@@ -465,14 +465,15 @@ def render_contact_card(
     elif user is None and login_available:
         rating_html = '<div class="rating-summary"><span class="rating-count">🔒 Entre para avaliar e ver as notas</span></div>'
 
-    st.markdown(
+    # Use st.html for this nested card markup. st.markdown may treat the dynamically
+    # generated contact_links HTML as literal text in some Streamlit builds.
+    st.html(
         f'''<div class="contact-card">
           <div class="contact-heading"><div class="contact-name">{name}</div>{premium_badge}</div>
           <div class="contact-meta">📍 {city}{distance_text}</div>
           {rating_html}
           <div class="phone-row">{phones}</div>
         </div>''',
-        unsafe_allow_html=True,
     )
     if ratings_ready and supabase_client is not None and user is not None:
         render_rating_widget(row, supabase_client, user, own_ratings or {})
