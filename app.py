@@ -21,6 +21,17 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_FILE = BASE_DIR / "data" / "parceiros.csv"
 LOGO_FILE = BASE_DIR / "logo_comprastar.png"
 EARTH_RADIUS_KM = 6371.0088
+MANAGER_EMAILS = {
+    "maiki.durigon@starprotecao.com.br",
+    "joao.andrade@starprotecao.com.br",
+}
+AUTHORIZED_EMAILS = {
+    "rhayssa.grassi@starprotecao.com.br",
+    "willian.silva@starprotecao.com.br",
+    "felipe.cardoso@starprotecao.com.br",
+    "gabriel.santos@starprotecao.com.br",
+    *MANAGER_EMAILS,
+}
 
 st.set_page_config(
     page_title="CompraStar - Localizador de Parceiros",
@@ -28,6 +39,21 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="collapsed",
 )
+
+# Clicar na logo define reset_home=1 na URL. Limpamos a busca e voltamos à visão geral.
+# Isto precisa acontecer antes de criar o widget de cidade, para poder limpar seu estado.
+try:
+    reset_home_requested = st.query_params.get("reset_home") == "1"
+except Exception:
+    reset_home_requested = False
+
+if reset_home_requested:
+    for state_key in ("city_autocomplete", "last_searched_input", "search_result", "force_city_search"):
+        st.session_state.pop(state_key, None)
+    try:
+        del st.query_params["reset_home"]
+    except Exception:
+        pass
 
 # A logo é embutida no cabeçalho para que funcione também depois do deploy no Streamlit Cloud.
 try:
@@ -44,8 +70,11 @@ st.markdown(
       .stApp {{background:#071426;}}
       .block-container {{padding-top: 1.25rem; padding-bottom: 1.2rem; max-width: 1500px;}}
       .hero {{display:flex; align-items:center; gap:1.35rem; padding:1.25rem 1.5rem; border-radius:18px; background:linear-gradient(120deg,#071426,#0c2342 62%,#152d4a); color:#f8fafc; margin-bottom:1.1rem; border:1px solid #203b5b; box-shadow:0 12px 30px rgba(0,0,0,.24);}}
-      .hero-logo-wrap {{flex:0 0 auto; display:flex; align-items:center; justify-content:center; width:225px; min-height:82px; box-sizing:border-box; padding:0; background:transparent; border:0;}}
-      .hero-logo {{display:block; width:100%; height:auto; max-height:86px; object-fit:contain; filter:drop-shadow(0 3px 8px rgba(0,0,0,.18));}}
+      .hero-logo-link {{flex:0 0 auto; display:flex; align-items:center; justify-content:center; width:225px; min-height:82px; box-sizing:border-box; padding:0; background:transparent; border:0; text-decoration:none !important; cursor:pointer; border-radius:10px;}}
+      .hero-logo-link:focus-visible {{outline:2px solid #ff8617; outline-offset:5px;}}
+      .hero-logo-wrap {{display:flex; align-items:center; justify-content:center; width:100%; min-height:82px; box-sizing:border-box; padding:0; background:transparent; border:0;}}
+      .hero-logo {{display:block; width:100%; height:auto; max-height:86px; object-fit:contain; filter:drop-shadow(0 3px 8px rgba(0,0,0,.18)); transition:transform .15s ease, filter .15s ease;}}
+      .hero-logo-link:hover .hero-logo {{transform:translateY(-1px); filter:drop-shadow(0 4px 11px rgba(255,134,23,.20));}}
       .hero-copy h1 {{font-size:1.85rem; line-height:1.2; margin:0 0 .4rem 0; color:#f8fafc; letter-spacing:-.025em;}}
       .hero-copy p {{margin:0; color:#c2d2e5; font-size:1rem;}}
       .hero-accent {{width:46px; height:4px; margin-top:.9rem; border-radius:99px; background:linear-gradient(90deg,#ff315e,#ff8617);}}
@@ -84,7 +113,7 @@ st.markdown(
       @media (max-width:650px) {{.hero {{align-items:flex-start; flex-direction:column; padding:1rem;}} .hero-logo-wrap {{width:185px; min-height:68px;}} .hero-copy h1 {{font-size:1.55rem;}}}}
     </style>
     <div class="hero">
-      {f'<div class="hero-logo-wrap"><img class="hero-logo" src="data:image/png;base64,{LOGO_B64}" alt="CompraStar"></div>' if LOGO_B64 else ''}
+      {f'<a class="hero-logo-link" href="?reset_home=1" aria-label="Voltar à página inicial" title="Voltar à página inicial"><div class="hero-logo-wrap"><img class="hero-logo" src="data:image/png;base64,{LOGO_B64}" alt="CompraStar — voltar à página inicial"></div></a>' if LOGO_B64 else ''}
       <div class="hero-copy">
         <h1>CompraStar - Localizador de Parceiros</h1>
         <p>Encontre autopeças próximas e encontre os contatos em poucos cliques.</p>
@@ -111,17 +140,24 @@ def is_premium_supplier(value: object) -> bool:
     """Identifica parceiros premium pelos nomes definidos pela CompraStar."""
     name = normalize_text(value)
     return (
-        any(term in name for term in ("JOTA", "PLACAR", "CASTELO", "ANDINHO"))
+        any(term in name for term in ("JOTA", "PLACAR", "ANDINHO"))
         or bool(re.search(r"\bPRO\b", name))
     )
 
 
-def ensure_premium_column(frame: pd.DataFrame) -> pd.DataFrame:
-    """Garante a coluna de premium também para resultados antigos guardados na sessão.
+def _as_bool(value: object) -> bool:
+    """Converte valores do CSV/Supabase para booleano sem tratar texto 'False' como True."""
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().casefold() in {"true", "1", "yes", "sim", "premium", "y"}
 
-    O Streamlit pode manter ``search_result`` em session_state entre atualizações.
-    Se o DataFrame foi criado por uma versão antiga do app, ele pode não ter
-    ``is_premium`` mesmo que a base atual já tenha essa coluna.
+
+def ensure_premium_column(frame: pd.DataFrame) -> pd.DataFrame:
+    """Prepara a categoria premium sem apagar escolhas explícitas da gestão.
+
+    Se ``is_premium`` já existir, esse valor é intencional (veio do cadastro
+    ou de uma substituição persistida pelo gestor). Só calcula os padrões por
+    nome/categoria quando a coluna ainda não existe.
     """
     frame = frame.copy()
     if "Nome" not in frame.columns:
@@ -129,14 +165,16 @@ def ensure_premium_column(frame: pd.DataFrame) -> pd.DataFrame:
     if "Categoria" not in frame.columns:
         frame["Categoria"] = "Regular"
 
-    named_premium = frame["Nome"].map(is_premium_supplier)
-    category_premium = frame["Categoria"].astype(str).str.strip().str.casefold().eq("premium")
-    existing_premium = pd.Series(False, index=frame.index, dtype=bool)
     if "is_premium" in frame.columns:
-        existing_premium = frame["is_premium"].map(
-            lambda value: value is True or str(value).strip().casefold() in {"true", "1", "yes", "sim", "premium"}
-        )
-    frame["is_premium"] = named_premium | category_premium | existing_premium
+        frame["is_premium"] = frame["is_premium"].map(_as_bool)
+    else:
+        named_premium = frame["Nome"].map(is_premium_supplier)
+        category_premium = frame["Categoria"].astype(str).str.strip().str.casefold().eq("premium")
+        # Peças Castelo Pedro é regular por padrão. A gestão pode alterar essa
+        # decisão explicitamente mais tarde na área de gestão, se necessário.
+        castle_exclusion = frame["Nome"].map(lambda value: "CASTELO" in normalize_text(value))
+        frame["is_premium"] = (named_premium | category_premium) & ~castle_exclusion
+
     frame["Categoria"] = frame["is_premium"].map({True: "Premium", False: "Regular"})
     return frame
 
@@ -165,7 +203,11 @@ def supplier_key_for_row(row: object) -> str:
 def ensure_supplier_key_column(frame: pd.DataFrame) -> pd.DataFrame:
     frame = frame.copy()
     if "supplier_key" not in frame.columns:
-        frame["supplier_key"] = frame.apply(supplier_key_for_row, axis=1)
+        frame["supplier_key"] = ""
+    invalid = frame["supplier_key"].isna() | frame["supplier_key"].astype(str).str.strip().isin({"", "nan", "None"})
+    if invalid.any():
+        frame.loc[invalid, "supplier_key"] = frame.loc[invalid].apply(supplier_key_for_row, axis=1)
+    frame["supplier_key"] = frame["supplier_key"].astype(str)
     return frame
 
 
@@ -198,6 +240,76 @@ def load_partners() -> pd.DataFrame:
     df["cidade_mapa"] = df["Cidade"].map(canonical_city)
     df = ensure_supplier_key_column(df)
     return df.reset_index(drop=True)
+
+
+def load_supplier_directory(supabase_client) -> tuple[pd.DataFrame, bool, str | None]:
+    """Carrega parceiros adicionados pela gestão no banco permanente do Supabase."""
+    columns = ["Nome", "Números", "Cidade", "DDD(s)", "UF provável pelo DDD", "Contatos", "Categoria", "WhatsApp(s)", "supplier_key", "is_premium"]
+    try:
+        response = (
+            supabase_client.table("supplier_directory")
+            .select("supplier_key,name,phone_numbers,city,ddds,state,contacts,category,whatsapp_numbers,latitude,longitude")
+            .order("name")
+            .execute()
+        )
+        records = response.data or []
+    except Exception as exc:
+        return pd.DataFrame(columns=columns), False, str(exc)
+
+    rows = []
+    for item in records:
+        city_value = str(item.get("city") or "").strip()
+        lat = item.get("latitude")
+        lon = item.get("longitude")
+        if city_value and lat is not None and lon is not None:
+            key = canonical_city(city_value) or normalize_text(city_value)
+            if key:
+                # Adiciona municípios novos em memória para eles também entrarem no mapa e na busca.
+                CITY_COORDS.setdefault(key, (float(lat), float(lon)))
+                CITY_LABELS.setdefault(key, city_value)
+        rows.append({
+            "Nome": str(item.get("name") or "").strip(),
+            "Números": str(item.get("phone_numbers") or "").strip(),
+            "Cidade": city_value,
+            "DDD(s)": str(item.get("ddds") or "").strip(),
+            "UF provável pelo DDD": str(item.get("state") or "SC").strip(),
+            "Contatos": str(item.get("contacts") or "").strip(),
+            "Categoria": str(item.get("category") or "Regular").strip(),
+            "WhatsApp(s)": str(item.get("whatsapp_numbers") or "").strip(),
+            "supplier_key": str(item.get("supplier_key") or "").strip(),
+            "is_premium": str(item.get("category") or "Regular").strip().casefold() == "premium",
+        })
+    return pd.DataFrame(rows, columns=columns), True, None
+
+
+def load_supplier_premium_overrides(supabase_client) -> tuple[dict[str, bool], bool, str | None]:
+    """Carrega as classificações premium persistidas pelos gestores."""
+    try:
+        response = (
+            supabase_client.table("supplier_premium_overrides")
+            .select("supplier_key,is_premium")
+            .execute()
+        )
+        overrides = {
+            str(item.get("supplier_key") or ""): _as_bool(item.get("is_premium"))
+            for item in (response.data or [])
+            if str(item.get("supplier_key") or "").strip()
+        }
+        return overrides, True, None
+    except Exception as exc:
+        return {}, False, str(exc)
+
+
+def apply_premium_overrides(frame: pd.DataFrame, overrides: dict[str, bool]) -> pd.DataFrame:
+    """Aplica decisões explícitas do Supabase sobre o padrão local de premium."""
+    frame = ensure_premium_column(ensure_supplier_key_column(frame))
+    if overrides:
+        frame["is_premium"] = frame.apply(
+            lambda row: overrides.get(str(row.get("supplier_key") or ""), bool(row.get("is_premium", False))),
+            axis=1,
+        )
+    frame["Categoria"] = frame["is_premium"].map({True: "Premium", False: "Regular"})
+    return frame
 
 
 def normalize_phone(raw: str, ddd: str = "") -> str | None:
@@ -727,6 +839,204 @@ def load_own_ratings(supabase_client, user) -> dict:
     }
 
 
+def render_manager_supplier_form(
+    supabase_client,
+    user,
+    partners: pd.DataFrame,
+    directory_ready: bool,
+    premium_overrides_ready: bool,
+    premium_overrides: dict[str, bool],
+) -> None:
+    """Área de gestão exclusiva para inserir parceiros e decidir quem é premium."""
+    email = (getattr(user, "email", "") or "").strip().casefold()
+    if email not in MANAGER_EMAILS:
+        return
+
+    with st.expander("🛠️ Gestão de parceiros", expanded=False):
+        st.caption("Área exclusiva para Maiki e João Marobin. Cadastros e classificações são salvos no Supabase e compartilhados com a equipe.")
+        add_tab, premium_tab = st.tabs(["➕ Adicionar parceiro", "⭐ Gerenciar premium"])
+
+        with add_tab:
+            if not directory_ready:
+                st.error(
+                    "O cadastro permanente ainda não está habilitado. No Supabase, abra SQL Editor e execute "
+                    "o arquivo `supabase/add_supplier_directory.sql` desta versão. Depois atualize esta página."
+                )
+            else:
+                with st.form("manager_add_supplier_form", clear_on_submit=True):
+                    supplier_name = st.text_input("Nome do fornecedor", placeholder="Ex.: Auto Peças Exemplo")
+                    city_text = st.text_input("Cidade", placeholder="Digite o município, por exemplo Tubarão")
+                    uf_value = st.selectbox("Estado", ["SC", "PR", "RS", "SP", "MG", "RJ", "GO", "MS", "MT", "BA", "ES", "DF", "AC", "AL", "AP", "AM", "CE", "MA", "PA", "PB", "PE", "PI", "RN", "RO", "RR", "SE", "TO"], index=0)
+                    ddd = st.text_input("DDD padrão (opcional)", placeholder="Ex.: 48", max_chars=3)
+                    category = st.selectbox("Classificação inicial", ["Regular", "Premium"], index=0, help="Somente os gestores podem alterar essa classificação depois.")
+                    st.markdown("**Contatos e telefones**")
+                    st.caption("Informe um telefone por linha. Marque WhatsApp também para telefones fixos que tenham WhatsApp.")
+                    contact_inputs = []
+                    for idx in range(1, 5):
+                        name_col, phone_col, wa_col = st.columns([1.0, 1.45, 0.85], gap="small")
+                        with name_col:
+                            contact_name = st.text_input("Nome do contato" if idx == 1 else f"Contato {idx}", key=f"new_supplier_contact_name_{idx}", placeholder="Nome" if idx == 1 else "Opcional")
+                        with phone_col:
+                            phone = st.text_input("Telefone com DDD" if idx == 1 else f"Telefone {idx}", key=f"new_supplier_phone_{idx}", placeholder="(48) 99999-9999")
+                        with wa_col:
+                            has_whatsapp = st.checkbox("WhatsApp", key=f"new_supplier_whatsapp_{idx}")
+                        contact_inputs.append((contact_name.strip(), phone.strip(), bool(has_whatsapp)))
+                    submitted = st.form_submit_button("Adicionar fornecedor à base", type="primary", use_container_width=True)
+
+                if submitted:
+                    clean_name = supplier_name.strip()
+                    clean_city = city_text.strip()
+                    ddd_clean = re.sub(r"\D", "", ddd)[-2:]
+                    errors = []
+                    if not clean_name:
+                        errors.append("Informe o nome do fornecedor.")
+                    if not clean_city:
+                        errors.append("Informe a cidade.")
+
+                    prepared_contacts = []
+                    whatsapp_numbers = []
+                    normalized_numbers = set()
+                    phone_raw_values = []
+                    for contact_name, phone, has_whatsapp in contact_inputs:
+                        if not phone and not contact_name:
+                            continue
+                        if not phone:
+                            errors.append(f"Informe o telefone de {contact_name} ou deixe essa linha vazia.")
+                            continue
+                        parsed = parse_phones(phone, ddd_clean)
+                        if len(parsed) != 1:
+                            errors.append(f"Confira o telefone '{phone}'. Use um número por linha e inclua o DDD se necessário.")
+                            continue
+                        international = parsed[0][1]
+                        if international in normalized_numbers:
+                            errors.append(f"O número {phone} está repetido no formulário.")
+                            continue
+                        normalized_numbers.add(international)
+                        person = contact_name or "Contato"
+                        prepared_contacts.append(f"{person}: {phone}")
+                        phone_raw_values.append(phone)
+                        if has_whatsapp:
+                            whatsapp_numbers.append(phone)
+
+                    if not phone_raw_values:
+                        errors.append("Cadastre pelo menos um telefone.")
+
+                    city_key = canonical_city(clean_city)
+                    latitude = longitude = None
+                    display_city = clean_city
+                    if not errors:
+                        if city_key:
+                            latitude, longitude = CITY_COORDS[city_key]
+                            display_city = CITY_LABELS.get(city_key, clean_city)
+                        else:
+                            with st.spinner("Localizando o município para posicionar o fornecedor no mapa..."):
+                                geocoded = geocode_other_city(f"{clean_city}, {uf_value}")
+                            if geocoded:
+                                latitude, longitude, _ = geocoded
+                                city_key = normalize_text(clean_city)
+                                display_city = clean_city.strip().title()
+                            else:
+                                errors.append("Não consegui localizar essa cidade. Confira o nome e o estado.")
+
+                    if errors:
+                        for error in errors:
+                            st.error(error)
+                    else:
+                        new_row = {"Nome": clean_name, "Cidade": display_city}
+                        supplier_key = supplier_key_for_row(new_row)
+                        current_keys = set(partners.get("supplier_key", pd.Series(dtype=str)).astype(str))
+                        if supplier_key in current_keys:
+                            st.error("Já existe um cadastro com esse nome e essa cidade. Confira a base antes de adicionar novamente.")
+                        else:
+                            payload = {
+                                "supplier_key": supplier_key,
+                                "name": clean_name,
+                                "phone_numbers": "; ".join(phone_raw_values),
+                                "city": display_city,
+                                "ddds": ddd_clean,
+                                "state": uf_value,
+                                "contacts": "; ".join(prepared_contacts),
+                                "category": category,
+                                "whatsapp_numbers": "; ".join(whatsapp_numbers),
+                                "latitude": float(latitude),
+                                "longitude": float(longitude),
+                                "created_by": str(user.id),
+                            }
+                            try:
+                                supabase_client.table("supplier_directory").insert(payload).execute()
+                                st.cache_data.clear()
+                                st.success(f"{clean_name} foi adicionado à base. O cadastro aparecerá para toda a equipe.")
+                                st.rerun()
+                            except Exception as exc:
+                                error_text = str(exc).casefold()
+                                if "duplicate" in error_text or "unique" in error_text or "23505" in error_text:
+                                    st.error("Já existe um fornecedor com essa identificação. Confira o nome e a cidade.")
+                                elif "row-level security" in error_text or "42501" in error_text or "permission" in error_text:
+                                    st.error("O banco recusou o cadastro. Confira se você entrou como gestor e executou o SQL de gestão no Supabase.")
+                                else:
+                                    st.error("Não foi possível salvar o fornecedor no banco. Confira a tabela supplier_directory e tente novamente.")
+
+        with premium_tab:
+            if not premium_overrides_ready:
+                st.error(
+                    "A classificação premium compartilhada ainda não está habilitada no banco. "
+                    "Execute `supabase/add_supplier_directory.sql` desta versão no SQL Editor do Supabase."
+                )
+            elif partners.empty:
+                st.info("Não há fornecedores cadastrados para gerenciar.")
+            else:
+                indexed = {}
+                for _, row in partners.sort_values(["Nome", "Cidade"], kind="stable").iterrows():
+                    key = str(row.get("supplier_key") or supplier_key_for_row(row))
+                    label = f"{str(row.get('Nome', 'Fornecedor'))} — {str(row.get('Cidade', 'Cidade não informada'))}"
+                    # Chaves podem repetir caso existam linhas duplicadas; a mesma ficha será uma opção só.
+                    indexed.setdefault(key, {"label": label, "row": row})
+                choices = list(indexed.keys())
+                selected_key = st.selectbox(
+                    "Escolha o fornecedor",
+                    options=choices,
+                    format_func=lambda key: indexed[key]["label"],
+                    key="manager_supplier_premium_choice",
+                )
+                selected_row = indexed[selected_key]["row"]
+                current_value = premium_overrides.get(selected_key, bool(selected_row.get("is_premium", False)))
+                premium_choice = st.checkbox(
+                    "Este fornecedor é PREMIUM",
+                    value=bool(current_value),
+                    key=f"manager_premium_toggle_{selected_key[:24]}",
+                    help="O selo será atualizado para todos os compradores depois de salvar.",
+                )
+                current_saved_value = premium_overrides.get(selected_key, bool(selected_row.get("is_premium", False)))
+                if st.button("Salvar classificação", type="primary", key=f"manager_save_premium_{selected_key[:24]}", use_container_width=True):
+                    if bool(premium_choice) == bool(current_saved_value):
+                        st.info("A classificação já está assim; nenhuma alteração foi necessária.")
+                    else:
+                        override_payload = {
+                            "supplier_key": selected_key,
+                            "supplier_name": str(selected_row.get("Nome", "Fornecedor"))[:200],
+                            "city": str(selected_row.get("Cidade", ""))[:200],
+                            "is_premium": bool(premium_choice),
+                            "updated_by": str(user.id),
+                        }
+                        try:
+                            supabase_client.table("supplier_premium_overrides").upsert(
+                                override_payload, on_conflict="supplier_key"
+                            ).execute()
+                            st.success(
+                                f"{override_payload['supplier_name']} foi marcado como "
+                                f"{'PREMIUM' if premium_choice else 'regular'}. A alteração será compartilhada com toda a equipe."
+                            )
+                            st.session_state.pop("search_result", None)
+                            st.cache_data.clear()
+                            st.rerun()
+                        except Exception as exc:
+                            error_text = str(exc).casefold()
+                            if "row-level security" in error_text or "42501" in error_text or "permission" in error_text:
+                                st.error("O banco recusou a alteração. Confira se o usuário é gestor e execute o SQL atualizado de gestão no Supabase.")
+                            else:
+                                st.error("Não foi possível salvar a classificação. Confira a tabela supplier_premium_overrides no Supabase.")
+
+
 supabase_client, logged_user, supabase_configured, is_logged_in = render_auth_panel()
 # Falha fechada: não carregamos parceiros, mapa, telefones ou formulários de avaliação
 # se o Supabase não estiver configurado ou se não houver uma sessão autenticada.
@@ -751,10 +1061,31 @@ if supabase_configured and supabase_client is not None:
         )
 
 try:
-    partners = load_partners()
+    csv_partners = load_partners()
+    database_partners, supplier_directory_ready, supplier_directory_error = load_supplier_directory(supabase_client)
+    premium_overrides, premium_overrides_ready, premium_overrides_error = load_supplier_premium_overrides(supabase_client)
+    if database_partners.empty:
+        partners = csv_partners.copy()
+    else:
+        partners = pd.concat([csv_partners, database_partners], ignore_index=True, sort=False)
+    partners = ensure_premium_column(partners)
+    partners["cidade_mapa"] = partners["Cidade"].map(canonical_city)
+    partners = ensure_supplier_key_column(partners)
+    partners = apply_premium_overrides(partners, premium_overrides)
 except Exception as exc:
     st.error(f"Não foi possível carregar a lista de parceiros: {exc}")
     st.stop()
+
+render_manager_supplier_form(
+    supabase_client,
+    logged_user,
+    partners,
+    supplier_directory_ready,
+    premium_overrides_ready,
+    premium_overrides,
+)
+if (getattr(logged_user, "email", "") or "").strip().casefold() in MANAGER_EMAILS and (not supplier_directory_ready or not premium_overrides_ready):
+    st.caption("Para habilitar o cadastro de parceiros e a classificação premium compartilhada, execute `supabase/add_supplier_directory.sql` no SQL Editor do Supabase.")
 
 form_left, form_right = st.columns([4, 1])
 with form_left:
