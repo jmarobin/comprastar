@@ -4,6 +4,3 @@ __pycache__/
 venv/
 .env
 .streamlit/secrets.toml
-data/*.db
-data/*.db-shm
-data/*.db-wal

@@ -1,55 +1,50 @@
-# Star Compras — Orçamentos por placa
+# Localizador de Parceiros — Autopeças
 
-Aplicação independente em Streamlit para registrar um caso por placa/sinistro, colar até cinco orçamentos recebidos por WhatsApp, extrair os preços automaticamente, comparar cobertura e valores por peça e acompanhar fornecedor, decisão e entrega.
+Aplicação em Streamlit que permite ao comprador digitar uma cidade e visualizar autopeças parceiras em um raio de até 100 km.
 
-## Funcionalidades
+## O que já faz
 
-- Cadastro de caso por placa, com sinistro, veículo, comprador, região e oficina.
-- Até cinco espaços de orçamento por caso.
-- Colagem do texto como recebido do WhatsApp, com extração do preço no final de cada linha.
-- Soma automática das linhas interpretadas + frete informado.
-- Comparação das descrições normalizadas entre fornecedores e identificação do menor valor por item.
-- Cobertura de peças por orçamento, peças que faltam e destaque de proposta com cobertura completa.
-- Conferência explícita de linhas não interpretadas e linhas tratadas como totais/frete/observações.
-- Cadastro de fornecedores por região, categorias, qualidade percebida, confiabilidade e condições comerciais.
-- Importação de cadastro de fornecedores por Excel/CSV e modelo Excel para preenchimento.
-- Registro do fornecedor selecionado, justificativa, status do pedido, previsão/entrega real e custo final.
-- Dashboard gerencial e exportação de casos, orçamentos, itens interpretados e fornecedores.
+- Campo de busca por cidade (aceita cidades da base e tenta geocodificar outras cidades brasileiras).
+- Raio ajustável de 25 a 100 km.
+- Mapa interativo com a cidade pesquisada, o círculo do raio e marcadores das autopeças.
+- Clique em um marcador para abrir o cartão do parceiro com nome, cidade, telefones e links para ligação/WhatsApp quando o formato do número permitir.
+- Lista de parceiros ordenada por distância aproximada.
+- Área de revisão para cadastros cuja cidade está ambígua ou não foi reconhecida.
 
-## Rodar no computador
+## Como rodar no computador
 
-Requer Python 3.10 ou mais recente.
+1. Instale Python 3.11 ou superior.
+2. Extraia a pasta do projeto.
+3. Abra o terminal dentro da pasta `localizador_parceiros`.
+4. Instale as dependências:
 
-```bash
-python -m venv .venv
-```
+   ```bash
+   pip install -r requirements.txt
+   ```
 
-Windows:
-```powershell
-.venv\Scripts\Activate.ps1
-pip install -r requirements.txt
-streamlit run app.py
-```
+5. Inicie o app:
 
-macOS/Linux:
-```bash
-source .venv/bin/activate
-pip install -r requirements.txt
-streamlit run app.py
-```
+   ```bash
+   streamlit run app.py
+   ```
 
-O banco `data/star_compras_placas.db` é criado automaticamente na primeira execução. Faça backup periódico desse arquivo.
+## Como publicar pelo GitHub + Streamlit Community Cloud
 
-## Como funciona a extração
+1. Entre no GitHub e crie um repositório. Para uso interno, escolha privado e confirme as regras de acesso antes de publicar os contatos.
+2. Envie todos os arquivos e pastas deste projeto para o repositório, mantendo `app.py`, `requirements.txt`, `city_coords.py`, a pasta `data/` e `.streamlit/`.
+3. Entre em [Streamlit Community Cloud](https://share.streamlit.io/) e conecte a conta do GitHub.
+4. Clique em **Create app**, selecione o repositório e informe `app.py` como arquivo principal.
+5. Clique em **Deploy**. As dependências são instaladas pelo `requirements.txt`.
 
-O comprador escolhe o fornecedor, cola o texto e salva. Linhas como `FAROL ESQ 480` ou `PORTA DIANTEIRA ESQ 1.790,00` são interpretadas como descrição + valor no fim da linha. Acentos, hífens e abreviações comuns são normalizados para facilitar a conferência. Linhas sem preço final ou com formato inesperado ficam em uma seção de revisão e não entram silenciosamente no subtotal.
+## Atualizar a lista de parceiros
 
-A aplicação não usa IA externa para ler as cotações; a extração é feita por regras locais. Formatos novos devem ser testados. O frete deve ser informado no campo próprio. Linhas que começam com TOTAL, SUBTOTAL, FRETE, ENTREGA ou PRAZO são isoladas para evitar dupla contagem, mas devem ser conferidas.
+O arquivo `data/parceiros.csv` é separado por ponto e vírgula (`;`) e está em UTF-8. Para incluir ou alterar um parceiro, atualize esse arquivo e envie a alteração ao GitHub. Preserve as colunas `Nome`, `Números`, `Cidade`, `DDD(s)` e `UF provável pelo DDD`.
 
-## Importante antes de usar com dados reais da Star
+A coluna **Cidade** deve conter preferencialmente um único município por registro. Linhas com vários municípios no mesmo campo e cidades não reconhecidas aparecem na área de revisão e não são posicionadas até serem corrigidas.
 
-Esta é uma primeira versão para validar o fluxo. Usa SQLite local, sem login, perfis de acesso, trilha de auditoria ou sincronização multiusuário robusta. Antes de uso corporativo, implementar autenticação, permissões, auditoria, backup e armazenamento corporativo persistente. Não use um banco SQLite local em hospedagem efêmera sem política de persistência.
+## Observações importantes
 
-A comparação por peça depende das descrições fornecidas. O sistema normaliza grafias comuns, mas não garante equivalência técnica entre peças. Confirme lado/posição, código, condição, marca e compatibilidade do veículo. O menor total só é comparável quando as propostas cobrem o mesmo conjunto de peças e condições adequadas.
-
-O indicador de gap é uma oportunidade estimada contra a menor proposta com cobertura completa; não deve ser apresentado como economia realizada. O custo final é registrado separadamente.
+- A distância é calculada em linha reta entre o centro aproximado do município pesquisado e o centro aproximado do município parceiro. Não é distância por estrada nem localização exata do estabelecimento.
+- Para cidades que não estão na lista de coordenadas usada pela base, a aplicação tenta consultar o serviço público Nominatim/OpenStreetMap. Essa função depende de conexão à internet.
+- Se o app ficar público, os dados de contato que aparecem nele poderão ser vistos por quem tiver acesso ao app. Revise as configurações de acesso e a autorização para compartilhar os telefones antes de publicar.
+- A planilha de origem contém grafias alternativas e registros com cidades múltiplas. O app trata algumas grafias comuns, mas os casos ambíguos exigem revisão manual.
