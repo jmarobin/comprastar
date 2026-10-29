@@ -53,9 +53,13 @@ st.markdown(
       .metric-label {{font-size:.82rem; color:#aebfd3; margin-bottom:.25rem;}}
       .metric-value {{font-size:1.55rem; font-weight:750; color:#ff8a1c;}}
       .contact-card {{border:1px solid #243955; border-radius:14px; padding:.95rem 1rem; margin-bottom:.7rem; background:linear-gradient(145deg,#102039,#0b1728); box-shadow:0 5px 16px rgba(0,0,0,.16);}}
+      div[data-testid="stVerticalBlockBorderWrapper"] {{border:1px solid #243955 !important; border-radius:14px !important; background:linear-gradient(145deg,#102039,#0b1728) !important; padding:.65rem .8rem !important; margin-bottom:.7rem !important; box-shadow:0 5px 16px rgba(0,0,0,.12);}}
+      div[data-testid="stVerticalBlockBorderWrapper"] > div {{gap:.35rem !important;}}
       .contact-name {{font-weight:750; color:#f4f7fb; font-size:1rem; margin-bottom:.25rem;}}
       .contact-heading {{display:flex; align-items:center; flex-wrap:wrap; gap:.48rem; margin-bottom:.42rem;}}
       .contact-name {{font-weight:750; color:#f4f7fb; font-size:1rem; margin:0;}}
+      div[data-testid="stPopover"] button {{background:#0a1728 !important; color:#ff9a26 !important; border:1px solid #604221 !important; border-radius:8px !important; padding:.3rem .45rem !important; min-height:36px !important; font-size:.78rem !important; font-weight:800 !important; white-space:nowrap !important;}}
+      div[data-testid="stPopover"] button:hover {{background:#1b2a3d !important; border-color:#ff9a26 !important;}}
       .premium-badge {{display:inline-flex; align-items:center; gap:.2rem; padding:.15rem .45rem; border-radius:6px; background:linear-gradient(100deg,#ff315e,#ff8617); color:#fff; font-size:.68rem; font-weight:850; letter-spacing:.05em; white-space:nowrap;}}
       .contact-meta {{color:#a9bbcf; font-size:.84rem; margin-bottom:.7rem;}}
       .rating-inline {{display:inline-flex; align-items:center; gap:.28rem; flex-wrap:wrap; color:#d8e3f1; font-size:.78rem; padding:.18rem .45rem; border-radius:7px; border:1px solid #3d4051; background:#0a1728; white-space:nowrap;}}
@@ -463,91 +467,91 @@ def render_contact_card(
     ratings_ready: bool = False,
     login_available: bool = False,
 ) -> None:
+    """Renderiza cartão; as estrelas clicáveis abrem a avaliação dentro do próprio cartão."""
     distance_text = f' · {row["distancia_km"]:.1f} km' if show_distance and pd.notna(row.get("distancia_km")) else ""
     name = html.escape(str(row["Nome"]))
     city = html.escape(str(row["Cidade"]))
     phones = contact_links(row["Números"], row["DDD(s)"], row.get("Contatos", ""), row.get("WhatsApp(s)", ""))
     premium_badge = '<span class="premium-badge">★ PREMIUM</span>' if bool(row.get("is_premium", False)) else ""
     supplier_key = str(row.get("supplier_key") or supplier_key_for_row(row))
+    key_suffix = re.sub(r"[^a-zA-Z0-9]", "", supplier_key[:18]) or hashlib.md5(name.encode("utf-8")).hexdigest()[:10]
     stats = (rating_summary or {}).get(supplier_key, {})
-    rating_html = ""
-    if ratings_ready:
-        count = int(stats.get("rating_count", 0))
-        if count > 0:
-            avg = float(stats.get("average_rating", 0))
-            rounded = max(0, min(5, int(round(avg))))
-            stars = "★" * rounded + "☆" * (5 - rounded)
-            rating_html = (
-                f'<div class="rating-inline" title="Média de {avg:.1f} em 5, baseada em {count} avaliação(ões)">'
-                f'<span class="rating-stars">{stars}</span>'
-                f'<span class="rating-score">{avg:.1f}</span>'
-                f'<span class="rating-count">({count} avaliações)</span></div>'
-            )
-        else:
-            rating_html = (
-                '<div class="rating-inline" title="Este fornecedor ainda não recebeu avaliações">'
-                '<span class="rating-stars">☆☆☆☆☆</span>'
-                '<span class="rating-count">(0 avaliações)</span></div>'
-            )
+    rating_count = int(stats.get("rating_count", 0)) if ratings_ready else 0
+    rating_avg = float(stats.get("average_rating", 0)) if rating_count else 0.0
+    rounded = max(0, min(5, int(round(rating_avg))))
+    rating_stars = "★" * rounded + "☆" * (5 - rounded)
+    current_rating = (own_ratings or {}).get(supplier_key)
 
-    # Rating summary is placed alongside the supplier name for quick scanning.
-    # Contact links use st.html so Streamlit does not render HTML as literal text.
-    st.html(
-        f'''<div class="contact-card">
-          <div class="contact-heading"><div class="contact-name">{name}</div>{premium_badge}{rating_html}</div>
-          <div class="contact-meta">📍 {city}{distance_text}</div>
-          <div class="phone-row">{phones}</div>
-        </div>''',
-    )
-    if ratings_ready and supabase_client is not None and user is not None:
-        render_rating_widget(row, supabase_client, user, own_ratings or {})
-
-
-def render_rating_widget(row: pd.Series, supabase_client, user, own_ratings: dict) -> None:
-    """Um voto ativo por usuário/fornecedor; editar substitui a nota, não cria outro voto."""
-    supplier_key = str(row.get("supplier_key") or supplier_key_for_row(row))
-    current_rating = own_ratings.get(supplier_key)
-    key_suffix = supplier_key[:16]
-    expander_label = "Editar sua avaliação" if current_rating is not None else "⭐ Avaliar fornecedor"
-    with st.expander(expander_label, expanded=False):
-        if current_rating is not None:
-            st.caption(
-                f"Sua nota atual é {int(current_rating)}/5. Alterar a nota substitui a anterior e continua contando como uma única avaliação."
-            )
-        else:
-            st.caption("Você pode registrar uma única avaliação para este fornecedor. A nota fica vinculada ao seu acesso.")
-        with st.form(key=f"rating_form_{key_suffix}"):
-            selected_rating = st.radio(
-                "Sua nota",
-                options=[1, 2, 3, 4, 5],
-                index=(int(current_rating) - 1) if current_rating is not None else 4,
-                horizontal=True,
-                format_func=lambda value: f"{'★' * value}{'☆' * (5 - value)}  {value}",
-            )
-            saved = st.form_submit_button("Salvar avaliação", use_container_width=True)
-        if saved:
-            try:
-                supabase_client.table("supplier_ratings").upsert(
-                    {
-                        "user_id": str(user.id),
-                        "supplier_key": supplier_key,
-                        "supplier_name": str(row["Nome"])[:200],
-                        "rating": int(selected_rating),
-                    },
-                    on_conflict="user_id,supplier_key",
-                ).execute()
-                st.success("Sua avaliação foi salva. Obrigado!")
-                st.rerun()
-            except Exception:
-                st.error("Não foi possível salvar a avaliação. Confira a conexão com o banco e tente novamente.")
+    # The Streamlit container is the card shell so the interactive popover stays inside it.
+    with st.container(border=True, key=f"partner_card_{key_suffix}"):
+        name_col, rating_col = st.columns([3.1, 2], gap="small", vertical_alignment="center")
+        with name_col:
+            st.html(f'<div class="contact-heading"><div class="contact-name">{name}</div>{premium_badge}</div>')
+        with rating_col:
+            if ratings_ready and supabase_client is not None and user is not None:
+                if rating_count:
+                    rating_button_label = f"{rating_stars} {rating_avg:.1f} · {rating_count}"
+                    rating_help = f"Média de {rating_avg:.1f}/5, com {rating_count} avaliações. Clique para avaliar."
+                else:
+                    rating_button_label = "☆☆☆☆☆ (0)"
+                    rating_help = "Este fornecedor ainda não tem avaliações. Clique para dar a primeira nota."
+                with st.popover(rating_button_label, help=rating_help, use_container_width=True):
+                    if current_rating is not None:
+                        st.caption(
+                            f"Sua nota atual: {int(current_rating)}/5. Ao salvar outra nota, ela substitui a anterior."
+                        )
+                    else:
+                        st.caption("Sua nota fica vinculada ao seu login. Você pode manter apenas uma avaliação ativa por fornecedor.")
+                    selected_rating = st.radio(
+                        "Sua nota",
+                        options=[1, 2, 3, 4, 5],
+                        index=(int(current_rating) - 1) if current_rating is not None else 4,
+                        horizontal=True,
+                        format_func=lambda value: f"{'★' * value}{'☆' * (5 - value)} {value}",
+                        key=f"rating_choice_{key_suffix}",
+                    )
+                    if st.button("Salvar avaliação", key=f"save_rating_{key_suffix}", type="primary", use_container_width=True):
+                        try:
+                            supabase_client.table("supplier_ratings").upsert(
+                                {
+                                    "user_id": str(user.id),
+                                    "supplier_key": supplier_key,
+                                    "supplier_name": str(row["Nome"])[:200],
+                                    "rating": int(selected_rating),
+                                },
+                                on_conflict="user_id,supplier_key",
+                            ).execute()
+                            st.toast("Avaliação salva! Obrigado.", icon="⭐")
+                            st.rerun()
+                        except Exception:
+                            st.error("Não foi possível salvar. Confira a conexão com o banco e tente novamente.")
+            elif ratings_ready:
+                if rating_count:
+                    st.markdown(f'<div class="rating-inline"><span class="rating-stars">{rating_stars}</span><span class="rating-score">{rating_avg:.1f}</span><span class="rating-count">({rating_count})</span></div>', unsafe_allow_html=True)
+                else:
+                    st.markdown('<div class="rating-inline"><span class="rating-stars">☆☆☆☆☆</span><span class="rating-count">(0 avaliações)</span></div>', unsafe_allow_html=True)
+            else:
+                st.caption("Notas indisponíveis")
+        st.html(
+            f'<div class="contact-meta">📍 {city}{distance_text}</div>'
+            f'<div class="phone-row">{phones}</div>'
+        )
 
 
 def get_supabase_config() -> tuple[str, str]:
-    """Lê somente a URL e a chave pública do Supabase pelos Streamlit Secrets."""
+    """Lê URL e chave pública do Supabase; aceita nome antigo e novo da chave."""
     try:
         config = st.secrets.get("supabase", {})
-        url = str(config.get("url", "")).strip()
-        anon_key = str(config.get("anon_key", "")).strip()
+        url = str(config.get("url", config.get("project_url", ""))).strip()
+        # Projetos Supabase podem exibir a chave de cliente como "anon" (legada)
+        # ou "Publishable key" (nova). O nome do campo TOML pode ser qualquer um
+        # destes aliases, mas o valor precisa ser a chave pública, nunca secret/service_role.
+        anon_key = str(
+            config.get("anon_key", "")
+            or config.get("publishable_key", "")
+            or config.get("publishable", "")
+            or config.get("anon", "")
+        ).strip()
         return url, anon_key
     except Exception:
         return "", ""
@@ -577,9 +581,16 @@ def render_auth_panel():
 
     if not url or not anon_key:
         st.error("O CompraStar está bloqueado até configurar a autenticação do Supabase.")
+        missing = []
+        if not url:
+            missing.append("`url`")
+        if not anon_key:
+            missing.append("`anon_key` ou `publishable_key`")
         st.markdown(
-            "Em **Streamlit Community Cloud → App settings → Secrets**, configure `[supabase]` com `url` e `anon_key`, "
-            "e `[access]` com a lista de e-mails autorizados. Veja `README.md`."
+            "Em **Streamlit Community Cloud → App settings → Secrets**, verifique a seção `[supabase]`. "
+            f"Campo(s) não encontrado(s): {', '.join(missing)}. "
+            "Use a URL do projeto e a chave pública (Publishable key ou anon legada); nunca use `secret`/`service_role`. "
+            "Depois clique em **Save** e reinicie o app se necessário."
         )
         return None, None, False, False
 
@@ -816,95 +827,117 @@ if should_search:
                 st.error("Não consegui localizar essa cidade. Confira a grafia e tente novamente, por exemplo: Criciúma, SC.")
 
 result = st.session_state.get("search_result")
-if result:
-    # O resultado usa o raio selecionado na última busca até que uma nova busca seja enviada.
+overview_mode = result is None
+
+if overview_mode:
+    # Página inicial: todos os parceiros aparecem no mapa, com referência visual em Tubarão.
+    lat, lon = CITY_COORDS["TUBARAO"]
+    display_name = "Todos os parceiros"
+    radius_used = None
+    reference_key = "TUBARAO"
+    nearby = partners[partners["cidade_mapa"].notna()].copy()
+    nearby = ensure_premium_column(nearby)
+    nearby = ensure_supplier_key_column(nearby)
+    distances = []
+    for _, row in nearby.iterrows():
+        partner_lat, partner_lon = CITY_COORDS[row["cidade_mapa"]]
+        distances.append(haversine_km(lat, lon, partner_lat, partner_lon))
+    nearby["distancia_km"] = distances
+else:
+    # Resultado filtrado após pesquisa por cidade e raio.
     lat, lon = result["lat"], result["lon"]
-    # Corrige resultados antigos mantidos na sessão depois de um deploy.
-    # Versões anteriores podiam guardar um DataFrame sem a coluna is_premium,
-    # causando KeyError ao construir os marcadores do mapa.
     nearby = ensure_premium_column(result["nearby"])
     nearby = ensure_supplier_key_column(nearby)
     if "cidade_mapa" not in nearby.columns and "Cidade" in nearby.columns:
         nearby["cidade_mapa"] = nearby["Cidade"].map(canonical_city)
     if "distancia_km" not in nearby.columns:
         nearby["distancia_km"] = 0.0
-    nearby["media_avaliacao"] = nearby["supplier_key"].map(
-        lambda key: rating_summary.get(str(key), {}).get("average_rating", 0.0)
-    )
-    nearby["total_avaliacoes"] = nearby["supplier_key"].map(
-        lambda key: rating_summary.get(str(key), {}).get("rating_count", 0)
-    )
-    nearby = nearby.sort_values(
-        ["is_premium", "media_avaliacao", "distancia_km", "Nome"],
-        ascending=[False, False, True, True],
-        kind="stable",
-    ).reset_index(drop=True)
-    result["nearby"] = nearby
-    st.session_state["search_result"] = result
     display_name = result["display_name"]
-    radius_used = result["radius"]
+    radius_used = int(result["radius"])
     reference_key = result.get("city_key")
 
+nearby["media_avaliacao"] = nearby["supplier_key"].map(
+    lambda key: rating_summary.get(str(key), {}).get("average_rating", 0.0)
+)
+nearby["total_avaliacoes"] = nearby["supplier_key"].map(
+    lambda key: rating_summary.get(str(key), {}).get("rating_count", 0)
+)
+nearby = nearby.sort_values(
+    ["is_premium", "media_avaliacao", "distancia_km", "Nome"],
+    ascending=[False, False, True, True],
+    kind="stable",
+).reset_index(drop=True)
+if not overview_mode:
+    result["nearby"] = nearby
+    st.session_state["search_result"] = result
+
+if overview_mode:
+    st.markdown("### Visão geral da rede CompraStar")
+    st.caption("O mapa abre com referência em Tubarão e mostra todos os parceiros cadastrados. Digite uma cidade e pressione Enter para aproximar a busca dos fornecedores daquela região.")
+else:
     st.markdown(f"### Parceiros próximos de **{display_name}**")
-    metric_cols = st.columns(3)
-    metric_data = [
-        ("Parceiros encontrados", str(len(nearby))),
-        ("Raio de busca", f"{radius_used} km"),
-        ("Cidades representadas", str(nearby["Cidade"].nunique() if not nearby.empty else 0)),
+
+metric_cols = st.columns(3)
+metric_data = [
+    ("Parceiros no mapa" if overview_mode else "Parceiros encontrados", str(len(nearby))),
+    ("Raio padrão" if overview_mode else "Raio de busca", "25 km" if overview_mode else f"{radius_used} km"),
+    ("Cidades representadas", str(nearby["Cidade"].nunique() if not nearby.empty else 0)),
+]
+for col, (label, value) in zip(metric_cols, metric_data):
+    with col:
+        st.markdown(f'<div class="metric-box"><div class="metric-label">{label}</div><div class="metric-value">{value}</div></div>', unsafe_allow_html=True)
+st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
+
+if ratings_ready:
+    evaluated = [
+        (key, value) for key, value in rating_summary.items()
+        if int(value.get("rating_count", 0)) > 0
     ]
-    for col, (label, value) in zip(metric_cols, metric_data):
-        with col:
-            st.markdown(f'<div class="metric-box"><div class="metric-label">{label}</div><div class="metric-value">{value}</div></div>', unsafe_allow_html=True)
-    st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
+    evaluated.sort(key=lambda item: (-float(item[1].get("average_rating", 0)), -int(item[1].get("rating_count", 0))))
+    with st.expander("🏆 Ranking dos fornecedores mais bem avaliados", expanded=False):
+        if not evaluated:
+            st.info("Ainda não há avaliações registradas. Clique nas estrelas de um cartão para ser o primeiro a avaliar um fornecedor.")
+        else:
+            partner_index = partners.set_index("supplier_key", drop=False)
+            for place, (key, stats) in enumerate(evaluated[:10], start=1):
+                supplier_name = str(stats.get("supplier_name", "Fornecedor"))
+                supplier_city = ""
+                is_premium = False
+                if key in partner_index.index:
+                    partner_row = partner_index.loc[key]
+                    if isinstance(partner_row, pd.DataFrame):
+                        partner_row = partner_row.iloc[0]
+                    supplier_name = str(partner_row.get("Nome", supplier_name))
+                    supplier_city = str(partner_row.get("Cidade", ""))
+                    is_premium = bool(partner_row.get("is_premium", False))
+                premium_text = " · ★ PREMIUM" if is_premium else ""
+                st.markdown(
+                    f"**{place}. {html.escape(supplier_name)}**{premium_text}  "
+                    f"\n\n<small>{html.escape(supplier_city)} · ⭐ {float(stats['average_rating']):.1f}/5 "
+                    f"· {int(stats['rating_count'])} avaliação(ões)</small>",
+                    unsafe_allow_html=True,
+                )
 
-    if ratings_ready:
-        evaluated = [
-            (key, value) for key, value in rating_summary.items()
-            if int(value.get("rating_count", 0)) > 0
-        ]
-        evaluated.sort(key=lambda item: (-float(item[1].get("average_rating", 0)), -int(item[1].get("rating_count", 0))))
-        with st.expander("🏆 Ranking dos fornecedores mais bem avaliados", expanded=False):
-            if not evaluated:
-                st.info("Ainda não há avaliações registradas. Seja o primeiro a avaliar um fornecedor.")
-            else:
-                partner_index = partners.set_index("supplier_key", drop=False)
-                for place, (key, stats) in enumerate(evaluated[:10], start=1):
-                    supplier_name = str(stats.get("supplier_name", "Fornecedor"))
-                    supplier_city = ""
-                    is_premium = False
-                    if key in partner_index.index:
-                        partner_row = partner_index.loc[key]
-                        if isinstance(partner_row, pd.DataFrame):
-                            partner_row = partner_row.iloc[0]
-                        supplier_name = str(partner_row.get("Nome", supplier_name))
-                        supplier_city = str(partner_row.get("Cidade", ""))
-                        is_premium = bool(partner_row.get("is_premium", False))
-                    premium_text = " · ★ PREMIUM" if is_premium else ""
-                    st.markdown(
-                        f"**{place}. {html.escape(supplier_name)}**{premium_text}  "
-                        f"\n\n<small>{html.escape(supplier_city)} · ⭐ {float(stats['average_rating']):.1f}/5 "
-                        f"· {int(stats['rating_count'])} avaliação(ões)</small>",
-                        unsafe_allow_html=True,
-                    )
-
-    m = folium.Map(location=[lat, lon], zoom_start=9, control_scale=True, tiles=None, prefer_canvas=True)
-    # Mapa de ruas claro, sem inversão de cores nem chave de API.
-    folium.TileLayer(
-        tiles="OpenStreetMap",
-        name="Mapa de ruas",
-        attr="&copy; OpenStreetMap contributors",
-        control=False,
-        max_zoom=19,
-    ).add_to(m)
-    m.get_root().header.add_child(folium.Element("""
-      <style>
-        .leaflet-div-icon { background: transparent !important; border: 0 !important; }
-        .leaflet-popup-content-wrapper { background: #0d1b2d; color: #e6edf3; border: 1px solid #344256; border-radius: 12px; box-shadow: 0 12px 28px rgba(7,20,38,.30); padding: 0; }
-        .leaflet-popup-content { margin: 0; max-width: 340px; }
-        .leaflet-popup-tip { background: #0d1b2d; }
-        .leaflet-popup-close-button { color: #e6edf3 !important; padding: 8px 9px 0 0 !important; }
-      </style>
-    """))
+# A visão geral fica centrada em Tubarão. Nas pesquisas, desenhamos o raio e aproximamos para a região.
+map_zoom = 6 if overview_mode else 9
+m = folium.Map(location=[lat, lon], zoom_start=map_zoom, control_scale=True, tiles=None, prefer_canvas=True)
+folium.TileLayer(
+    tiles="OpenStreetMap",
+    name="Mapa de ruas",
+    attr="&copy; OpenStreetMap contributors",
+    control=False,
+    max_zoom=19,
+).add_to(m)
+m.get_root().header.add_child(folium.Element("""
+  <style>
+    .leaflet-div-icon { background: transparent !important; border: 0 !important; }
+    .leaflet-popup-content-wrapper { background: #0d1b2d; color: #e6edf3; border: 1px solid #344256; border-radius: 12px; box-shadow: 0 12px 28px rgba(7,20,38,.30); padding: 0; }
+    .leaflet-popup-content { margin: 0; max-width: 340px; }
+    .leaflet-popup-tip { background: #0d1b2d; }
+    .leaflet-popup-close-button { color: #e6edf3 !important; padding: 8px 9px 0 0 !important; }
+  </style>
+"""))
+if not overview_mode:
     folium.Circle(
         location=[lat, lon],
         radius=radius_used * 1000,
@@ -916,99 +949,109 @@ if result:
         tooltip=f"Raio de {radius_used} km",
     ).add_to(m)
 
-    # Um marcador por município: vários parceiros compartilham o centro da cidade na base,
-    # então um marcador individual por empresa só criaria uma pilha visual sem precisão real.
-    reference_key = reference_key or resolve_city_prefix(display_name)
-    for city_key, city_rows in nearby.groupby("cidade_mapa", sort=True):
-        partner_lat, partner_lon = CITY_COORDS[city_key]
-        city_label = CITY_LABELS.get(city_key, city_key.title())
-        count = len(city_rows)
-        count_label = str(count) if count < 100 else "99+"
-        is_reference = bool(reference_key and city_key == reference_key)
-        has_premium = bool(city_rows["is_premium"].any())
-        bg = "linear-gradient(135deg,#ff315e,#ff8617)" if (is_reference or has_premium) else "linear-gradient(135deg,#29415f,#47627f)"
-        ring = "#fff2e7" if has_premium or is_reference else "#b4c6da"
-        badge = f'''<div style="width:38px;height:38px;border-radius:50%;display:flex;align-items:center;justify-content:center;box-sizing:border-box;background:{bg};border:2px solid {ring};box-shadow:0 3px 10px rgba(15,23,42,.35);color:#ffffff;font-family:Arial,sans-serif;font-size:13px;font-weight:800;">{count_label}</div>'''
-        premium_note = " · inclui parceiro premium" if has_premium else ""
-        folium.Marker(
-            [partner_lat, partner_lon],
-            tooltip=f"{city_label} · {count} parceiro(s){premium_note}",
-            popup=folium.Popup(city_popup_html(city_label, city_rows, rating_summary, ratings_ready), max_width=380, max_height=400),
-            icon=folium.DivIcon(html=badge, icon_size=(38, 38), icon_anchor=(19, 19), class_name="comprastar-city-marker"),
-        ).add_to(m)
+# Um marcador por município; o número representa quantos parceiros estão cadastrados naquela cidade.
+reference_key = reference_key or resolve_city_prefix(display_name)
+for city_key, city_rows in nearby.groupby("cidade_mapa", sort=True):
+    if city_key not in CITY_COORDS:
+        continue
+    partner_lat, partner_lon = CITY_COORDS[city_key]
+    city_label = CITY_LABELS.get(city_key, city_key.title())
+    count = len(city_rows)
+    count_label = str(count) if count < 100 else "99+"
+    is_reference = bool(reference_key and city_key == reference_key)
+    has_premium = bool(city_rows["is_premium"].any())
+    bg = "linear-gradient(135deg,#ff315e,#ff8617)" if (is_reference or has_premium) else "linear-gradient(135deg,#29415f,#47627f)"
+    ring = "#fff2e7" if has_premium or is_reference else "#b4c6da"
+    badge = f'''<div style="width:38px;height:38px;border-radius:50%;display:flex;align-items:center;justify-content:center;box-sizing:border-box;background:{bg};border:2px solid {ring};box-shadow:0 3px 10px rgba(15,23,42,.35);color:#ffffff;font-family:Arial,sans-serif;font-size:13px;font-weight:800;">{count_label}</div>'''
+    premium_note = " · inclui parceiro premium" if has_premium else ""
+    folium.Marker(
+        [partner_lat, partner_lon],
+        tooltip=f"{city_label} · {count} parceiro(s){premium_note}",
+        popup=folium.Popup(city_popup_html(city_label, city_rows, rating_summary, ratings_ready), max_width=380, max_height=400),
+        icon=folium.DivIcon(html=badge, icon_size=(38, 38), icon_anchor=(19, 19), class_name="comprastar-city-marker"),
+    ).add_to(m)
 
-    # Se a cidade pesquisada não tiver parceiros cadastrados, ainda mostramos o ponto de referência.
-    has_reference_marker = bool(reference_key and nearby["cidade_mapa"].eq(reference_key).any()) if not nearby.empty else False
-    if not has_reference_marker:
-        search_icon = '''<div style="width:34px;height:34px;border-radius:50%;display:flex;align-items:center;justify-content:center;background:#0b2340;border:3px solid #ff315e;color:#ff9a26;font-size:20px;font-weight:900;box-shadow:0 3px 10px rgba(15,23,42,.4);">★</div>'''
-        folium.Marker(
-            [lat, lon],
-            tooltip=f"Cidade pesquisada: {display_name}",
-            popup=folium.Popup(f"<b>Cidade pesquisada</b><br>{html.escape(display_name)}", max_width=220),
-            icon=folium.DivIcon(html=search_icon, icon_size=(34, 34), icon_anchor=(17, 17), class_name="comprastar-search-marker"),
-        ).add_to(m)
+has_reference_marker = bool(reference_key and nearby["cidade_mapa"].eq(reference_key).any()) if not nearby.empty else False
+if not has_reference_marker:
+    search_icon = '''<div style="width:34px;height:34px;border-radius:50%;display:flex;align-items:center;justify-content:center;background:#0b2340;border:3px solid #ff315e;color:#ff9a26;font-size:20px;font-weight:900;box-shadow:0 3px 10px rgba(15,23,42,.4);">★</div>'''
+    folium.Marker(
+        [lat, lon],
+        tooltip=("Referência inicial: Tubarão" if overview_mode else f"Cidade pesquisada: {display_name}"),
+        popup=folium.Popup(("<b>CompraStar · referência inicial em Tubarão</b>" if overview_mode else f"<b>Cidade pesquisada</b><br>{html.escape(display_name)}"), max_width=220),
+        icon=folium.DivIcon(html=search_icon, icon_size=(34, 34), icon_anchor=(17, 17), class_name="comprastar-search-marker"),
+    ).add_to(m)
 
-    if not nearby.empty:
-        min_lat, max_lat = min(lat, nearby["cidade_mapa"].map(lambda c: CITY_COORDS[c][0]).min()), max(lat, nearby["cidade_mapa"].map(lambda c: CITY_COORDS[c][0]).max())
-        min_lon, max_lon = min(lon, nearby["cidade_mapa"].map(lambda c: CITY_COORDS[c][1]).min()), max(lon, nearby["cidade_mapa"].map(lambda c: CITY_COORDS[c][1]).max())
-        m.fit_bounds([[min_lat, min_lon], [max_lat, max_lon]], padding=(36, 36), max_zoom=11)
+if not overview_mode and not nearby.empty:
+    city_coords = nearby["cidade_mapa"].map(lambda c: CITY_COORDS[c] if c in CITY_COORDS else (lat, lon))
+    min_lat = min(lat, city_coords.map(lambda coords: coords[0]).min())
+    max_lat = max(lat, city_coords.map(lambda coords: coords[0]).max())
+    min_lon = min(lon, city_coords.map(lambda coords: coords[1]).min())
+    max_lon = max(lon, city_coords.map(lambda coords: coords[1]).max())
+    m.fit_bounds([[min_lat, min_lon], [max_lat, max_lon]], padding=(36, 36), max_zoom=11)
 
-    map_col, cards_col = st.columns([1.75, 1], gap="large")
-    with map_col:
-        st_folium(m, use_container_width=True, height=610, returned_objects=[])
-    with cards_col:
+map_col, cards_col = st.columns([1.75, 1], gap="large")
+with map_col:
+    st_folium(m, use_container_width=True, height=610, returned_objects=[])
+with cards_col:
+    if overview_mode:
+        st.markdown("#### Parceiros em destaque")
+        st.caption("Todos os parceiros estão no mapa. Pesquise uma cidade para ver os contatos próximos.")
+        cards_to_show = nearby.head(5)
+    else:
         st.markdown("#### Contatos da região")
-        st.caption("Clique em um marcador para ver os parceiros cadastrados naquela cidade. Os contatos também ficam listados aqui.")
-        if nearby.empty:
-            st.info("Nenhuma autopeça com cidade mapeada foi encontrada nesse raio. Tente ampliar o raio ou pesquisar outra cidade.")
-        else:
-            for _, row in nearby.head(8).iterrows():
-                render_contact_card(
-                    row,
-                    rating_summary=rating_summary,
-                    supabase_client=supabase_client,
-                    user=logged_user,
-                    own_ratings=own_ratings,
-                    ratings_ready=ratings_ready,
-                    login_available=supabase_configured,
-                )
-            if len(nearby) > 8:
-                with st.expander(f"Ver os outros {len(nearby) - 8} parceiros encontrados"):
-                    for _, row in nearby.iloc[8:].iterrows():
-                        render_contact_card(
-                            row,
-                            rating_summary=rating_summary,
-                            supabase_client=supabase_client,
-                            user=logged_user,
-                            own_ratings=own_ratings,
-                            ratings_ready=ratings_ready,
-                            login_available=supabase_configured,
-                        )
+        st.caption("Clique em um marcador no mapa ou navegue pelos cartões para consultar contatos e avaliações.")
+        cards_to_show = nearby.head(8)
+    if nearby.empty:
+        st.info("Nenhuma autopeça com cidade mapeada foi encontrada. Tente pesquisar outra cidade.")
+    else:
+        for _, row in cards_to_show.iterrows():
+            render_contact_card(
+                row,
+                show_distance=not overview_mode,
+                rating_summary=rating_summary,
+                supabase_client=supabase_client,
+                user=logged_user,
+                own_ratings=own_ratings,
+                ratings_ready=ratings_ready,
+                login_available=supabase_configured,
+            )
+        if not overview_mode and len(nearby) > 8:
+            with st.expander(f"Ver os outros {len(nearby) - 8} parceiros encontrados"):
+                for _, row in nearby.iloc[8:].iterrows():
+                    render_contact_card(
+                        row,
+                        rating_summary=rating_summary,
+                        supabase_client=supabase_client,
+                        user=logged_user,
+                        own_ratings=own_ratings,
+                        ratings_ready=ratings_ready,
+                        login_available=supabase_configured,
+                    )
 
-    if not nearby.empty:
-        with st.expander("Ver lista completa dos parceiros encontrados"):
-            display = nearby[["Nome", "Cidade", "distancia_km"]].copy()
-            display["distancia_km"] = display["distancia_km"].map(lambda x: f"{x:.1f} km")
-            display = display.rename(columns={"Nome": "Autopeça", "distancia_km": "Distância aproximada"})
-            st.dataframe(display, use_container_width=True, hide_index=True)
+if not nearby.empty and not overview_mode:
+    with st.expander("Ver lista completa dos parceiros encontrados"):
+        display = nearby[["Nome", "Cidade", "distancia_km"]].copy()
+        display["distancia_km"] = display["distancia_km"].map(lambda x: f"{x:.1f} km")
+        display = display.rename(columns={"Nome": "Autopeça", "distancia_km": "Distância aproximada"})
+        st.dataframe(display, use_container_width=True, hide_index=True)
 
+if not overview_mode:
     st.markdown('<p class="small-note">As distâncias são aproximadas, em linha reta entre os centros dos municípios. Não representam quilometragem rodoviária nem o endereço exato da autopeça.</p>', unsafe_allow_html=True)
 
-    unmapped = partners[partners["cidade_mapa"].isna()]
-    if not unmapped.empty:
-        with st.expander(f"Cadastros que precisam de revisão de cidade ({len(unmapped)})"):
-            st.caption("Esses cadastros não entram no cálculo porque a cidade está escrita como uma lista de municípios ou não foi reconhecida. Corrija o campo Cidade no arquivo data/parceiros.csv para incluí-los no mapa.")
-            cols = ["Nome", "Cidade", "DDD(s)", "UF provável pelo DDD"]
-            st.dataframe(unmapped[cols].rename(columns={"Nome": "Autopeça", "DDD(s)": "DDD", "UF provável pelo DDD": "UF provável"}), use_container_width=True, hide_index=True)
-else:
-    st.markdown("### Como usar")
-    st.markdown("Digite a cidade e pressione Enter. Depois, navegue entre os parceiros encontrados no mapa e na lista ao lado. Quando o banco de avaliações estiver conectado, a média em estrelas e o total de notas aparecerão ao lado do nome de cada fornecedor.")
+unmapped = partners[partners["cidade_mapa"].isna()]
+if not unmapped.empty:
+    with st.expander(f"Cadastros que precisam de revisão de cidade ({len(unmapped)})"):
+        st.caption("Esses cadastros não entram no cálculo porque a cidade está escrita como uma lista de municípios ou não foi reconhecida. Corrija o campo Cidade no arquivo data/parceiros.csv para incluí-los no mapa.")
+        cols = ["Nome", "Cidade", "DDD(s)", "UF provável pelo DDD"]
+        st.dataframe(unmapped[cols].rename(columns={"Nome": "Autopeça", "DDD(s)": "DDD", "UF provável pelo DDD": "UF provável"}), use_container_width=True, hide_index=True)
 
 with st.expander("Sobre a base de contatos"):
     st.write(f"A base carregada contém **{len(partners)} fichas de parceiros**. Somente registros com cidade reconhecida entram no mapa. Alguns cadastros podem precisar de correção manual antes de aparecer na busca.")
+    st.write("A tela inicial mostra todos os parceiros no mapa, com referência visual em Tubarão. Após pesquisar, o mapa e a lista são filtrados pelo raio escolhido.")
     st.write("Os marcadores representam o centro aproximado do município cadastrado; não indicam o endereço exato da empresa.")
     st.write("A lista de contatos fica no arquivo `data/parceiros.csv`, que pode ser atualizado no GitHub quando houver novos parceiros ou mudanças nos telefones.")
     st.write("Para telefone fixo que também tenha WhatsApp, preencha a coluna `WhatsApp(s)` com o número (por exemplo, +554732814151). O app exibirá o atalho do WhatsApp mesmo que o número pareça fixo; deixe a célula vazia para manter a detecção automática atual dos celulares.")
+    st.write("Para avaliar um fornecedor, clique no botão de estrelas ao lado do nome dentro do próprio cartão. A nota fica vinculada ao usuário autenticado.")
 
 
 st.markdown('<div class="app-footer">powered by <strong>Marobin Group</strong></div>', unsafe_allow_html=True)
