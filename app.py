@@ -4,9 +4,12 @@ import base64
 import difflib
 import html
 import hashlib
+import io
 import math
 import re
 import unicodedata
+
+import requests
 from pathlib import Path
 
 import folium
@@ -137,6 +140,144 @@ def normalize_text(value: object) -> str:
     return text.strip(" -,")
 
 
+SOUTH_UF_NAMES = {
+    "PR": "Paraná", "PARANA": "PR",
+    "RS": "Rio Grande do Sul", "RIO GRANDE DO SUL": "RS",
+    "SC": "Santa Catarina", "SANTA CATARINA": "SC",
+}
+SOUTH_UF_CODES = {"PR": "41", "SC": "42", "RS": "43"}
+SOUTH_EXPECTED_COUNTS = {"PR": 399, "RS": 497, "SC": 295}
+CITY_KEY_UF: dict[str, str] = {}
+CITY_NAME_TO_KEYS: dict[str, list[str]] = {}
+CITY_CATALOG_READY = False
+CITY_CATALOG_ERROR: str | None = None
+
+
+@st.cache_data(ttl=60 * 60 * 24 * 30, show_spinner=False)
+def fetch_south_municipality_catalog() -> pd.DataFrame:
+    """Baixa e valida o catálogo geográfico dos 1.191 municípios do Sul."""
+    sources = [
+        "https://raw.githubusercontent.com/kelvins/municipios-brasileiros/master/csv/municipios.csv",
+        "https://raw.githubusercontent.com/hanslemm/Municipios-Brasileiros/master/csv/municipios.csv",
+        "https://raw.githubusercontent.com/michaeltcoelho/Municipios-Brasileiros/master/municipios_brasileiros.csv",
+    ]
+    errors = []
+    for source in sources:
+        try:
+            response = requests.get(
+                source,
+                timeout=(5, 20),
+                headers={"User-Agent": "CompraStar-Localizador/2.0"},
+            )
+            response.raise_for_status()
+            frame = pd.read_csv(
+                io.BytesIO(response.content),
+                encoding="utf-8-sig",
+                dtype={"codigo_ibge": "string", "codigo_uf": "string"},
+            )
+            if "nome" not in frame.columns and "nome_municipio" in frame.columns:
+                frame = frame.rename(columns={"nome_municipio": "nome"})
+            required_columns = {"nome", "latitude", "longitude", "codigo_uf"}
+            if not required_columns.issubset(frame.columns):
+                raise ValueError("O arquivo geográfico não contém as colunas esperadas.")
+            frame["codigo_uf"] = (
+                frame["codigo_uf"].astype(str).str.replace(r"\.0$", "", regex=True).str.zfill(2)
+            )
+            frame = frame[frame["codigo_uf"].isin(SOUTH_UF_CODES.values())].copy()
+            frame["latitude"] = pd.to_numeric(frame["latitude"], errors="coerce")
+            frame["longitude"] = pd.to_numeric(frame["longitude"], errors="coerce")
+            frame["nome"] = frame["nome"].fillna("").astype(str).str.strip()
+            frame = frame[
+                frame["nome"].ne("")
+                & frame["latitude"].between(-35, -21)
+                & frame["longitude"].between(-59, -47)
+            ].drop_duplicates(subset=["codigo_ibge"] if "codigo_ibge" in frame.columns else ["nome", "codigo_uf"])
+            counts_by_code = frame.groupby("codigo_uf").size().to_dict()
+            actual = {
+                uf: int(counts_by_code.get(code, 0))
+                for uf, code in SOUTH_UF_CODES.items()
+            }
+            if actual != SOUTH_EXPECTED_COUNTS:
+                raise ValueError(f"Catálogo incompleto: {actual}; esperado: {SOUTH_EXPECTED_COUNTS}.")
+            frame["UF"] = frame["codigo_uf"].map({value: key for key, value in SOUTH_UF_CODES.items()})
+            return frame[["nome", "UF", "latitude", "longitude"]].sort_values(
+                ["UF", "nome"], kind="stable"
+            ).reset_index(drop=True)
+        except Exception as exc:
+            errors.append(f"{source}: {exc}")
+    raise RuntimeError("Não foi possível carregar o catálogo completo de municípios. " + " | ".join(errors))
+
+
+def initialize_south_city_catalog() -> tuple[bool, str | None]:
+    """Registra todos os municípios e cria chaves distintas para homônimos."""
+    global CITY_CATALOG_READY, CITY_CATALOG_ERROR, CITY_KEY_UF, CITY_NAME_TO_KEYS
+    try:
+        catalog = fetch_south_municipality_catalog()
+        name_counts = catalog["nome"].map(normalize_text).value_counts().to_dict()
+        CITY_KEY_UF = {}
+        CITY_NAME_TO_KEYS = {}
+        for duplicated_name, occurrences in name_counts.items():
+            if occurrences > 1:
+                CITY_COORDS.pop(duplicated_name, None)
+                CITY_LABELS.pop(duplicated_name, None)
+        for row in catalog.itertuples(index=False):
+            name = str(row.nome).strip()
+            normalized_name = normalize_text(name)
+            uf = str(row.UF).strip().upper()
+            # Cidades com o mesmo nome em estados diferentes ganham uma chave própria.
+            key = f"{normalized_name}|{uf}" if name_counts.get(normalized_name, 0) > 1 else normalized_name
+            CITY_COORDS[key] = (float(row.latitude), float(row.longitude))
+            CITY_LABELS[key] = f"{name} - {uf}" if name_counts.get(normalized_name, 0) > 1 else name
+            CITY_KEY_UF[key] = uf
+            CITY_NAME_TO_KEYS.setdefault(normalized_name, []).append(key)
+
+        # Preserva aliases existentes e cidades adicionais já cadastradas pela gestão.
+        for key in list(CITY_COORDS):
+            base_name = key.split("|", 1)[0]
+            if base_name not in CITY_NAME_TO_KEYS:
+                CITY_NAME_TO_KEYS[base_name] = [key]
+        for alias, target in ALIASES.items():
+            alias_key = normalize_text(alias)
+            target_key = normalize_text(target)
+            if target_key in CITY_NAME_TO_KEYS:
+                CITY_NAME_TO_KEYS.setdefault(alias_key, CITY_NAME_TO_KEYS[target_key])
+        CITY_CATALOG_READY = True
+        CITY_CATALOG_ERROR = None
+        return True, None
+    except Exception as exc:
+        CITY_CATALOG_READY = False
+        CITY_CATALOG_ERROR = str(exc)
+        # Fallback: mantém as cidades antigas e a geocodificação pontual já existente.
+        CITY_NAME_TO_KEYS = {}
+        CITY_KEY_UF = {}
+        for key in CITY_COORDS:
+            CITY_NAME_TO_KEYS.setdefault(normalize_text(key), []).append(key)
+        for alias, target in ALIASES.items():
+            alias_key = normalize_text(alias)
+            target_key = normalize_text(target)
+            if target_key in CITY_NAME_TO_KEYS:
+                CITY_NAME_TO_KEYS.setdefault(alias_key, CITY_NAME_TO_KEYS[target_key])
+        return False, str(exc)
+
+
+def split_city_and_uf(value: object) -> tuple[str, str | None]:
+    """Extrai a UF quando o comprador digita 'Município - PR' ou 'Município, PR'."""
+    normalized = normalize_text(value)
+    state = None
+    match = re.search(r"(?:\s*,\s*|\s+-\s+|\s+)(PR|RS|SC)$", normalized)
+    if match:
+        state = match.group(1)
+        normalized = normalized[:match.start()].strip()
+    return ALIASES.get(normalized, normalized), state
+
+
+def normalize_state(value: object) -> str | None:
+    normalized = normalize_text(value)
+    if normalized in {"PR", "RS", "SC"}:
+        return normalized
+    return SOUTH_UF_NAMES.get(normalized)
+
+
 def is_premium_supplier(value: object) -> bool:
     """Identifica parceiros premium pelos nomes definidos pela CompraStar."""
     name = normalize_text(value)
@@ -180,12 +321,28 @@ def ensure_premium_column(frame: pd.DataFrame) -> pd.DataFrame:
     return frame
 
 
-def canonical_city(value: object) -> str | None:
-    city = normalize_text(value)
-    # Aceita entradas como "Criciúma - SC" ou "Criciúma, SC".
-    city = re.sub(r"(?:\s*,\s*|\s+-\s+|\s+)(AC|AL|AP|AM|BA|CE|DF|ES|GO|MA|MT|MS|MG|PA|PB|PR|PE|PI|RJ|RN|RS|RO|RR|SC|SP|SE|TO)$", "", city).strip()
-    city = ALIASES.get(city, city)
-    return city if city in CITY_COORDS else None
+def canonical_city(value: object, uf: object = None) -> str | None:
+    city, embedded_uf = split_city_and_uf(value)
+    state = normalize_state(uf) or embedded_uf
+    candidates = CITY_NAME_TO_KEYS.get(city, [])
+    if state:
+        for key in candidates:
+            if CITY_KEY_UF.get(key) == state:
+                return key
+        # Chaves dinâmicas de parceiros inseridos pela gestão também podem conter UF.
+        state_key = f"{city}|{state}"
+        if state_key in CITY_COORDS:
+            return state_key
+    if len(candidates) == 1:
+        return candidates[0]
+    if len(candidates) > 1:
+        return None
+    # Compatibilidade com cidades antigas e com cadastros externos ao catálogo.
+    if city in CITY_COORDS:
+        return city
+    if state and f"{city}|{state}" in CITY_COORDS:
+        return f"{city}|{state}"
+    return None
 
 
 def supplier_key_for_row(row: object) -> str:
@@ -193,10 +350,11 @@ def supplier_key_for_row(row: object) -> str:
     if hasattr(row, "get"):
         name_value = row.get("Nome", "")
         city_value = row.get("Cidade", "")
+        uf_value = row.get("UF provável pelo DDD", row.get("state", ""))
     else:
-        name_value, city_value = "", ""
+        name_value, city_value, uf_value = "", "", ""
     name_key = re.sub(r"[^A-Z0-9]+", " ", normalize_text(name_value)).strip()
-    city_key = canonical_city(city_value) or re.sub(r"[^A-Z0-9]+", " ", normalize_text(city_value)).strip()
+    city_key = canonical_city(city_value, uf_value) or re.sub(r"[^A-Z0-9]+", " ", normalize_text(city_value)).strip()
     # Nome + município identifica a ficha e sobrevive a atualizações de telefone.
     return hashlib.sha256(f"{name_key}|{city_key}".encode("utf-8")).hexdigest()
 
@@ -238,7 +396,10 @@ def load_partners() -> pd.DataFrame:
     df["WhatsApp(s)"] = df["WhatsApp(s)"].astype(str).str.strip()
     df = df[df["Nome"].ne("") & df["Números"].ne("")].copy()
     df = ensure_premium_column(df)
-    df["cidade_mapa"] = df["Cidade"].map(canonical_city)
+    df["cidade_mapa"] = df.apply(
+        lambda row: canonical_city(row.get("Cidade", ""), row.get("UF provável pelo DDD", "")),
+        axis=1,
+    )
     df = ensure_supplier_key_column(df)
     return df.reset_index(drop=True)
 
@@ -260,14 +421,19 @@ def load_supplier_directory(supabase_client) -> tuple[pd.DataFrame, bool, str | 
     rows = []
     for item in records:
         city_value = str(item.get("city") or "").strip()
+        state_value = str(item.get("state") or "").strip().upper()
         lat = item.get("latitude")
         lon = item.get("longitude")
         if city_value and lat is not None and lon is not None:
-            key = canonical_city(city_value) or normalize_text(city_value)
+            key = canonical_city(city_value, state_value) or normalize_text(city_value)
             if key:
                 # Adiciona municípios novos em memória para eles também entrarem no mapa e na busca.
                 CITY_COORDS.setdefault(key, (float(lat), float(lon)))
-                CITY_LABELS.setdefault(key, city_value)
+                CITY_LABELS.setdefault(key, f"{city_value} - {state_value}" if state_value else city_value)
+                CITY_KEY_UF.setdefault(key, state_value)
+                CITY_NAME_TO_KEYS.setdefault(normalize_text(city_value), [])
+                if key not in CITY_NAME_TO_KEYS[normalize_text(city_value)]:
+                    CITY_NAME_TO_KEYS[normalize_text(city_value)].append(key)
         rows.append({
             "Nome": str(item.get("name") or "").strip(),
             "Números": str(item.get("phone_numbers") or "").strip(),
@@ -352,13 +518,18 @@ def apply_supplier_profile_overrides(frame: pd.DataFrame, overrides: dict[str, d
             if field in item and item[field] is not None:
                 frame.at[index, column] = str(item[field]).strip()
         city = str(item.get("city") or frame.at[index, "Cidade"]).strip()
+        state = str(item.get("state") or frame.at[index, "UF provável pelo DDD"]).strip().upper()
         latitude = item.get("latitude")
         longitude = item.get("longitude")
         if city and latitude is not None and longitude is not None:
-            city_key = canonical_city(city) or normalize_text(city)
+            city_key = canonical_city(city, state) or normalize_text(city)
             if city_key:
                 CITY_COORDS[city_key] = (float(latitude), float(longitude))
-                CITY_LABELS[city_key] = city
+                CITY_LABELS[city_key] = f"{city} - {state}" if state else city
+                CITY_KEY_UF[city_key] = state
+                CITY_NAME_TO_KEYS.setdefault(normalize_text(city), [])
+                if city_key not in CITY_NAME_TO_KEYS[normalize_text(city)]:
+                    CITY_NAME_TO_KEYS[normalize_text(city)].append(city_key)
     return frame
 
 
@@ -514,10 +685,16 @@ def contact_links(
 
 @st.cache_data(ttl=60 * 60 * 24 * 30, show_spinner=False)
 def geocode_other_city(query: str) -> tuple[float, float, str] | None:
-    """Fallback para uma cidade digitada que não esteja na lista principal."""
+    """Fallback para municípios novos, sempre usando a UF quando ela foi informada."""
     try:
-        geolocator = Nominatim(user_agent="localizador-parceiros-autopecas/1.0", timeout=8)
-        place = geolocator.geocode(f"{query}, Brasil", country_codes="br", addressdetails=False)
+        city, state = split_city_and_uf(query)
+        state_name = {"PR": "Paraná", "RS": "Rio Grande do Sul", "SC": "Santa Catarina"}.get(state)
+        search_parts = [city]
+        if state_name:
+            search_parts.append(state_name)
+        search_parts.append("Brasil")
+        geolocator = Nominatim(user_agent="comprastar-localizador-parceiros/2.0 (municipal search)", timeout=10)
+        place = geolocator.geocode(", ".join(search_parts), country_codes="br", addressdetails=False)
         if place:
             return float(place.latitude), float(place.longitude), str(place.address)
     except Exception:
@@ -525,27 +702,48 @@ def geocode_other_city(query: str) -> tuple[float, float, str] | None:
     return None
 
 
+def city_prefix_candidates(query: str) -> list[str]:
+    """Retorna as cidades compatíveis com prefixo, respeitando a UF quando digitada."""
+    city_part, state = split_city_and_uf(query)
+    if not city_part:
+        return []
+    candidates = []
+    for key in CITY_COORDS:
+        key_name = key.split("|", 1)[0]
+        key_state = CITY_KEY_UF.get(key)
+        if state and key_state != state:
+            continue
+        label = normalize_text(CITY_LABELS.get(key, key_name))
+        if key_name.startswith(city_part) or label.startswith(city_part):
+            candidates.append(key)
+    return sorted(set(candidates))
+
+
 def resolve_city_prefix(query: str) -> str | None:
-    """Resolve prefixos únicos para que 'itaj' + Enter vire automaticamente 'Itajaí'."""
+    """Resolve nome ou prefixo de município; homônimos exigem escolha da UF."""
     normalized = normalize_text(query)
-    if not normalized:
+    city_part, state = split_city_and_uf(query)
+    if not city_part:
         return None
-    exact = canonical_city(query)
+    exact = canonical_city(query, state)
     if exact:
         return exact
 
-    # Considera tanto o nome sem acentos quanto o rótulo mostrado na pesquisa.
-    candidates = sorted(
-        key for key in CITY_COORDS
-        if key.startswith(normalized) or normalize_text(CITY_LABELS.get(key, key)).startswith(normalized)
-    )
+    candidates = city_prefix_candidates(query)
     if len(candidates) == 1:
         return candidates[0]
-    # Para abreviações um pouco digitadas errado, usa fuzzy match apenas se for inequívoco.
-    close = difflib.get_close_matches(normalized, list(CITY_COORDS), n=2, cutoff=0.78)
-    if len(close) == 1:
-        return close[0]
-    return None
+    if len(candidates) > 1:
+        return None
+
+    # Fuzzy match apenas quando o resultado é inequívoco e dentro da UF, se indicada.
+    possible = [
+        key for key in CITY_COORDS
+        if not state or CITY_KEY_UF.get(key) == state
+    ]
+    labels = {key: normalize_text(CITY_LABELS.get(key, key.split("|", 1)[0])) for key in possible}
+    close_labels = difflib.get_close_matches(city_part, list(labels.values()), n=2, cutoff=0.84)
+    matched = [key for key, label in labels.items() if label in close_labels]
+    return matched[0] if len(matched) == 1 else None
 
 
 def on_city_commit() -> None:
@@ -563,7 +761,10 @@ def resolve_search_city(query: str) -> tuple[float, float, str] | None:
     key = resolve_city_prefix(query)
     if key:
         lat, lon = CITY_COORDS[key]
-        return lat, lon, CITY_LABELS.get(key, key.title())
+        return lat, lon, CITY_LABELS.get(key, key.split("|", 1)[0].title())
+    # Não geocodifica um nome homônimo sem UF: isso poderia centralizar a busca no estado errado.
+    if len(city_prefix_candidates(query)) > 1:
+        return None
     fallback = geocode_other_city(query.strip())
     if fallback:
         return fallback
@@ -1096,7 +1297,7 @@ def render_manager_supplier_form(
         if not phone_raw_values:
             errors.append("Cadastre pelo menos um telefone.")
 
-        city_key = canonical_city(clean_city)
+        city_key = canonical_city(clean_city, uf_value)
         latitude = longitude = None
         display_city = clean_city
         if not errors:
@@ -1208,6 +1409,13 @@ supabase_client, logged_user, supabase_configured, is_logged_in = render_auth_pa
 if not supabase_configured or supabase_client is None or not is_logged_in or logged_user is None:
     st.stop()
 
+CITY_CATALOG_READY, CITY_CATALOG_ERROR = initialize_south_city_catalog()
+if not CITY_CATALOG_READY:
+    st.warning(
+        "Não foi possível carregar o catálogo completo de municípios neste momento. "
+        "A busca continuará disponível para as cidades já cadastradas; confira a conexão do Streamlit com o GitHub."
+    )
+
 rating_summary: dict = {}
 own_ratings: dict = {}
 ratings_ready = False
@@ -1237,7 +1445,10 @@ try:
     partners = ensure_premium_column(partners)
     partners = ensure_supplier_key_column(partners)
     partners = apply_supplier_profile_overrides(partners, profile_overrides)
-    partners["cidade_mapa"] = partners["Cidade"].map(canonical_city)
+    partners["cidade_mapa"] = partners.apply(
+        lambda row: canonical_city(row.get("Cidade", ""), row.get("UF provável pelo DDD", "")),
+        axis=1,
+    )
     partners = apply_premium_overrides(partners, premium_overrides)
 except Exception as exc:
     st.error(f"Não foi possível carregar a lista de parceiros: {exc}")
@@ -1265,7 +1476,7 @@ with form_left:
         placeholder="Digite uma cidade… (ex.: Itajaí)",
         accept_new_options=True,
         filter_mode="fuzzy",
-        help="Digite a cidade e pressione Enter. Se o início identificar uma única cidade, o campo será completado e a busca começará automaticamente.",
+        help="Catálogo completo de municípios do PR, RS e SC. Digite a cidade e pressione Enter; nomes iguais aparecem com a UF para você escolher corretamente.",
         key="city_autocomplete",
         on_change=on_city_commit,
     )
@@ -1323,7 +1534,10 @@ if should_search:
                 }
             else:
                 st.session_state.pop("search_result", None)
-                st.error("Não consegui localizar essa cidade. Confira a grafia e tente novamente, por exemplo: Criciúma, SC.")
+                if len(city_prefix_candidates(city_query)) > 1 and not split_city_and_uf(city_query)[1]:
+                    st.error("Há mais de um município com esse nome. Escolha a opção identificada com PR, RS ou SC.")
+                else:
+                    st.error("Não consegui localizar esse município. Confira a grafia e tente novamente, por exemplo: Itajaí ou Abatiá - PR.")
 
 result = st.session_state.get("search_result")
 overview_mode = result is None
@@ -1348,7 +1562,10 @@ else:
     nearby = ensure_premium_column(result["nearby"])
     nearby = ensure_supplier_key_column(nearby)
     if "cidade_mapa" not in nearby.columns and "Cidade" in nearby.columns:
-        nearby["cidade_mapa"] = nearby["Cidade"].map(canonical_city)
+        nearby["cidade_mapa"] = nearby.apply(
+            lambda row: canonical_city(row.get("Cidade", ""), row.get("UF provável pelo DDD", "")),
+            axis=1,
+        )
     if "distancia_km" not in nearby.columns:
         nearby["distancia_km"] = 0.0
     display_name = result["display_name"]
