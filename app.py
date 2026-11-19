@@ -57,15 +57,19 @@ st.markdown(
       #MainMenu, .stAppDeployButton {{display:none !important; visibility:hidden !important; height:0 !important;}}
       footer {{visibility:hidden !important; height:0 !important;}}
       .stApp {{background:#071426;}}
-      .block-container {{padding-top: 1.25rem; padding-bottom: 1.2rem; max-width: 1500px;}}
+      .block-container {{padding-top: .78rem; padding-bottom: .95rem; max-width: 1500px;}}
       .st-key-hero_header {{padding:1.1rem 1.55rem; min-height:190px; border-radius:18px; background:linear-gradient(120deg,#071426,#0c2342 62%,#152d4a); color:#f8fafc; margin-bottom:1.1rem; border:1px solid #203b5b; box-shadow:0 12px 30px rgba(0,0,0,.24);}}
       .st-key-hero_header [data-testid="stHorizontalBlock"] {{align-items:center;}}
       .hero-copy h1 {{font-size:1.85rem; line-height:1.2; margin:0 0 .4rem 0; color:#f8fafc; letter-spacing:-.025em;}}
       .hero-copy p {{margin:0; color:#c2d2e5; font-size:1rem;}}
       .hero-accent {{width:46px; height:4px; margin-top:.9rem; border-radius:99px; background:linear-gradient(90deg,#ff315e,#ff8617);}}
-      div[data-testid="stMarkdownContainer"] h3 {{font-size:1.28rem !important; line-height:1.3 !important; font-weight:780 !important; color:#f4f7fb !important; letter-spacing:-.018em !important; margin:1.35rem 0 .55rem !important;}}
-      div[data-testid="stMarkdownContainer"] h4 {{font-size:1.08rem !important; line-height:1.3 !important; font-weight:740 !important; color:#eaf1f9 !important; margin:1rem 0 .45rem !important;}}
-      div[data-testid="stCaptionContainer"] {{color:#9fb1c7 !important;}}
+      div[data-testid="stMarkdownContainer"] h3 {{font-size:1.28rem !important; line-height:1.3 !important; font-weight:780 !important; color:#f4f7fb !important; letter-spacing:-.018em !important; margin:.82rem 0 .38rem !important;}}
+      div[data-testid="stMarkdownContainer"] h4 {{font-size:1.08rem !important; line-height:1.3 !important; font-weight:740 !important; color:#eaf1f9 !important; margin:.7rem 0 .32rem !important;}}
+      div[data-testid="stCaptionContainer"] {{color:#9fb1c7 !important; margin-top:0 !important; margin-bottom:.12rem !important;}}
+      .st-key-auth_session_bar {{margin-bottom:-.45rem !important; padding-top:0 !important; padding-bottom:0 !important;}}
+      .st-key-auth_session_bar [data-testid="stHorizontalBlock"] {{gap:.55rem !important; align-items:center !important;}}
+      .st-key-auth_session_bar [data-testid="stCaptionContainer"] {{margin:0 !important; padding:0 !important;}}
+      .st-key-auth_session_bar button {{min-height:38px !important;}}
       div.st-key-header_manager_toggle button {{background:#102844 !important; color:#fff !important; border:1px solid #ff8a1c !important; border-radius:10px !important; min-height:46px !important; font-weight:800 !important; white-space:nowrap !important;}}
       div.st-key-header_manager_toggle button:hover {{background:#193b5f !important; border-color:#ffb15b !important;}}
       div.st-key-home_logo button {{display:block !important; min-height:158px !important; height:158px !important; width:168px !important; max-width:100%; padding:0 !important; margin:0 !important; background:transparent url("data:image/png;base64,{LOGO_B64}") center center / contain no-repeat !important; border:0 !important; box-shadow:none !important; color:transparent !important; border-radius:10px !important; cursor:pointer !important;}}
@@ -877,15 +881,30 @@ def render_contact_card(
     own_ratings: dict | None = None,
     ratings_ready: bool = False,
     login_available: bool = False,
+    card_scope: str = "regional",
 ) -> None:
-    """Renderiza cartão; as estrelas clicáveis abrem a avaliação dentro do próprio cartão."""
+    """Renderiza cartão; as estrelas clicáveis abrem a avaliação dentro do próprio cartão.
+
+    card_scope separa instâncias do mesmo fornecedor exibidas em áreas diferentes
+    (por exemplo, busca global e lista regional), evitando chaves duplicadas no Streamlit.
+    """
     distance_text = f' · {row["distancia_km"]:.1f} km' if show_distance and pd.notna(row.get("distancia_km")) else ""
     name = html.escape(str(row["Nome"]))
     city = html.escape(str(row["Cidade"]))
     phones = contact_links(row["Números"], row["DDD(s)"], row.get("Contatos", ""), row.get("WhatsApp(s)", ""))
     premium_badge = '<span class="premium-badge">★ PREMIUM</span>' if bool(row.get("is_premium", False)) else ""
     supplier_key = str(row.get("supplier_key") or supplier_key_for_row(row))
-    key_suffix = re.sub(r"[^a-zA-Z0-9]", "", supplier_key[:18]) or hashlib.md5(name.encode("utf-8")).hexdigest()[:10]
+    # A mesma autopeça pode aparecer simultaneamente na pesquisa global e na
+    # lista regional. A chave inclui o contexto e os dados da ficha para que
+    # cada cartão tenha identidade própria no Streamlit.
+    card_identity = "|".join((
+        str(card_scope),
+        supplier_key,
+        str(row.get("Cidade", "")),
+        str(row.get("Números", "")),
+        str(row.get("Contatos", "")),
+    ))
+    key_suffix = hashlib.sha1(card_identity.encode("utf-8")).hexdigest()[:16]
     stats = (rating_summary or {}).get(supplier_key, {})
     rating_count = int(stats.get("rating_count", 0)) if ratings_ready else 0
     rating_avg = float(stats.get("average_rating", 0)) if rating_count else 0.0
@@ -1058,18 +1077,19 @@ def render_auth_panel():
             user = None
 
     if user is not None:
-        c1, c2 = st.columns([5, 1])
-        with c1:
-            email_label = html.escape(st.session_state.get("sb_user_email", "comprador"))
-            st.caption(f"Sessão autenticada · **{email_label}**")
-        with c2:
-            if st.button("Sair", key="sb_logout", use_container_width=True):
-                try:
-                    client.auth.sign_out()
-                except Exception:
-                    pass
-                clear_login_state()
-                st.rerun()
+        with st.container(key="auth_session_bar"):
+            c1, c2 = st.columns([5, 1], gap="small", vertical_alignment="center")
+            with c1:
+                email_label = html.escape(st.session_state.get("sb_user_email", "comprador"))
+                st.caption(f"Sessão autenticada · **{email_label}**")
+            with c2:
+                if st.button("Sair", key="sb_logout", use_container_width=True):
+                    try:
+                        client.auth.sign_out()
+                    except Exception:
+                        pass
+                    clear_login_state()
+                    st.rerun()
         return client, user, True, True
 
     st.markdown("## Acesso restrito")
@@ -1821,7 +1841,7 @@ with map_col:
             )
             st.caption(f'{len(supplier_matches)} resultado(s) para "{supplier_search_query.strip()}". Os contatos aparecem abaixo.')
             visible_matches = supplier_matches.head(5)
-            for _, supplier_row in visible_matches.iterrows():
+            for match_index, (_, supplier_row) in enumerate(visible_matches.iterrows()):
                 render_contact_card(
                     supplier_row,
                     show_distance=False,
@@ -1831,11 +1851,12 @@ with map_col:
                     own_ratings=own_ratings,
                     ratings_ready=ratings_ready,
                     login_available=supabase_configured,
+                    card_scope=f"supplier_search_visible_{match_index}",
                 )
             remaining_matches = supplier_matches.iloc[5:]
             if not remaining_matches.empty:
                 with st.expander(f"Ver os outros {len(remaining_matches)} fornecedores encontrados"):
-                    for _, supplier_row in remaining_matches.iterrows():
+                    for match_index, (_, supplier_row) in enumerate(remaining_matches.iterrows(), start=5):
                         render_contact_card(
                             supplier_row,
                             show_distance=False,
@@ -1845,6 +1866,7 @@ with map_col:
                             own_ratings=own_ratings,
                             ratings_ready=ratings_ready,
                             login_available=supabase_configured,
+                            card_scope=f"supplier_search_more_{match_index}",
                         )
 
 with cards_col:
@@ -1861,7 +1883,7 @@ with cards_col:
     elif overview_mode and cards_to_show.empty:
         st.info("Ainda não há fornecedores premium cadastrados para destaque. O mapa continua mostrando todos os parceiros.")
     else:
-        for _, row in cards_to_show.iterrows():
+        for card_index, (_, row) in enumerate(cards_to_show.iterrows()):
             render_contact_card(
                 row,
                 show_distance=not overview_mode,
@@ -1871,10 +1893,11 @@ with cards_col:
                 own_ratings=own_ratings,
                 ratings_ready=ratings_ready,
                 login_available=supabase_configured,
+                card_scope=f"regional_visible_{card_index}",
             )
         if not overview_mode and len(nearby) > 8:
             with st.expander(f"Ver os outros {len(nearby) - 8} parceiros encontrados"):
-                for _, row in nearby.iloc[8:].iterrows():
+                for card_index, (_, row) in enumerate(nearby.iloc[8:].iterrows(), start=8):
                     render_contact_card(
                         row,
                         rating_summary=rating_summary,
@@ -1883,6 +1906,7 @@ with cards_col:
                         own_ratings=own_ratings,
                         ratings_ready=ratings_ready,
                         login_available=supabase_configured,
+                        card_scope=f"regional_more_{card_index}",
                     )
 
 if not nearby.empty and not overview_mode:
