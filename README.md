@@ -42,3 +42,11 @@ A base `data/parceiros.csv` foi revisada a partir do arquivo enviado pela equipe
 ## Versão 22 — nova identidade visual
 
 O cabeçalho foi ajustado para a nova logo vertical STAR Proteção Veicular Total. A imagem é exibida sem distorção, com transparência preservada e tamanhos responsivos para desktop e celular. O botão da logo continua limpando a cidade pesquisada e retornando à visão inicial. A base `data/parceiros.csv` foi atualizada com o arquivo de contatos mais recente fornecido pela equipe.
+
+## Versão 23 — pesquisa por fornecedor
+
+Foi adicionada uma caixa de pesquisa direta por nome do fornecedor, independente da cidade de referência e do raio do mapa. A pesquisa ignora acentos, maiúsculas/minúsculas e a ordem dos termos, permitindo, por exemplo, localizar "Peças Krambeck" digitando `krambeck`, `pecas krambeck` ou `krambeck pecas`.
+
+Os resultados mostram a cidade e a UF, telefones copiáveis, links de WhatsApp configurados, classificação Premium e média/quantidade de avaliações. Até oito fichas aparecem inicialmente; os demais resultados podem ser expandidos. A busca exige login, como o restante do CompraStar. Clicar na logo STAR limpa também essa pesquisa e volta à visão inicial.
+
+Não há migração SQL nem alteração dos Secrets para esta atualização.
