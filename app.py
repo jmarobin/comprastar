@@ -1526,91 +1526,13 @@ render_manager_supplier_form(
 if (getattr(logged_user, "email", "") or "").strip().casefold() in MANAGER_EMAILS and (not supplier_directory_ready or not premium_overrides_ready or not profile_overrides_ready):
     st.caption("Para habilitar todos os recursos de gestão, execute `supabase/add_supplier_directory.sql` e `supabase/add_supplier_profile_editing.sql` no SQL Editor do Supabase.")
 
-st.markdown("### Pesquisa por fornecedor")
-st.caption("Localize uma autopeça pelo nome e consulte seus contatos, independentemente da cidade.")
-# Busca direta por fornecedor: independente da cidade e do raio selecionados.
-# A caixa fica acima do mapa para o comprador localizar o contato pelo nome.
-supplier_search_col, supplier_clear_col = st.columns([5, 1], gap="small", vertical_alignment="bottom")
-with supplier_search_col:
-    supplier_search_query = st.text_input(
-        "Nome da autopeça ou fornecedor",
-        placeholder="Digite parte do nome (ex.: Krambeck, Jota, Placar)...",
-        help="Pesquisa em toda a base de parceiros, independentemente da cidade selecionada.",
-        key="supplier_name_search",
-        label_visibility="collapsed",
-    )
-with supplier_clear_col:
-    st.button(
-        "Limpar",
-        key="clear_supplier_name_search",
-        on_click=clear_supplier_search,
-        use_container_width=True,
-        help="Limpar a pesquisa por fornecedor",
-    )
-
-if str(supplier_search_query or "").strip():
-    supplier_matches = search_suppliers_by_name(partners, supplier_search_query)
-    if supplier_matches.empty:
-        st.info(f'Nenhum fornecedor encontrado para "{html.escape(str(supplier_search_query))}". Confira a grafia ou tente apenas uma parte do nome.')
-    else:
-        supplier_matches = ensure_premium_column(ensure_supplier_key_column(supplier_matches))
-        supplier_matches["media_avaliacao"] = supplier_matches["supplier_key"].map(
-            lambda key: rating_summary.get(str(key), {}).get("average_rating", 0.0)
-        )
-        supplier_matches["total_avaliacoes"] = supplier_matches["supplier_key"].map(
-            lambda key: rating_summary.get(str(key), {}).get("rating_count", 0)
-        )
-        supplier_matches = supplier_matches.sort_values(
-            ["is_premium", "media_avaliacao", "Cidade", "Nome"],
-            ascending=[False, False, True, True],
-            kind="stable",
-        ).reset_index(drop=True)
-        # Explicita a UF no cartão da busca global, pois pode haver cidades homônimas.
-        supplier_matches["Cidade"] = supplier_matches.apply(
-            lambda row: (
-                f"{row.get('Cidade', '')} - {normalize_state(row.get('UF provável pelo DDD', ''))}"
-                if normalize_state(row.get("UF provável pelo DDD", "")) else str(row.get("Cidade", ""))
-            ),
-            axis=1,
-        )
-        st.caption(f'{len(supplier_matches)} resultado(s) para "{supplier_search_query.strip()}". Os telefones e links de WhatsApp aparecem nos cartões abaixo.')
-        visible_matches = supplier_matches.head(8)
-        result_columns = st.columns(2, gap="medium")
-        for index, (_, supplier_row) in enumerate(visible_matches.iterrows()):
-            with result_columns[index % 2]:
-                render_contact_card(
-                    supplier_row,
-                    show_distance=False,
-                    rating_summary=rating_summary,
-                    supabase_client=supabase_client,
-                    user=logged_user,
-                    own_ratings=own_ratings,
-                    ratings_ready=ratings_ready,
-                    login_available=supabase_configured,
-                )
-        remaining_matches = supplier_matches.iloc[8:]
-        if not remaining_matches.empty:
-            with st.expander(f"Ver os outros {len(remaining_matches)} fornecedores encontrados"):
-                for _, supplier_row in remaining_matches.iterrows():
-                    render_contact_card(
-                        supplier_row,
-                        show_distance=False,
-                        rating_summary=rating_summary,
-                        supabase_client=supabase_client,
-                        user=logged_user,
-                        own_ratings=own_ratings,
-                        ratings_ready=ratings_ready,
-                        login_available=supabase_configured,
-                    )
-
-
 st.markdown("### Pesquisa por cidade")
 st.caption("Digite o município e pressione Enter para localizar parceiros próximos.")
 form_left, form_right = st.columns([4, 1])
 with form_left:
     city_options = sorted(set(CITY_LABELS.values()), key=lambda value: value.casefold())
     city_query = st.selectbox(
-        "Cidade de referência",
+        "Pesquisar cidade",
         options=city_options,
         index=None,
         placeholder="Digite uma cidade… (ex.: Itajaí)",
@@ -1619,6 +1541,7 @@ with form_left:
         help="Catálogo completo de municípios do PR, RS e SC. Digite a cidade e pressione Enter; nomes iguais aparecem com a UF para você escolher corretamente.",
         key="city_autocomplete",
         on_change=on_city_commit,
+        label_visibility="collapsed",
     )
 with form_right:
     radius = st.slider("Raio de busca (km)", min_value=25, max_value=100, value=25, step=25, key="search_radius")
@@ -1848,6 +1771,82 @@ if not overview_mode and not nearby.empty:
 map_col, cards_col = st.columns([1.75, 1], gap="large")
 with map_col:
     st_folium(m, use_container_width=True, height=610, returned_objects=[])
+
+    # Pesquisa global por fornecedor posicionada abaixo do mapa, aproveitando
+    # o espaço livre da coluna esquerda. Não depende da cidade nem do raio.
+    st.markdown("### Pesquisa por fornecedor")
+    st.caption("Pesquise pelo nome da autopeça para localizar seus contatos em qualquer cidade.")
+    supplier_search_col, supplier_clear_col = st.columns([5, 1], gap="small", vertical_alignment="bottom")
+    with supplier_search_col:
+        supplier_search_query = st.text_input(
+            "Nome da autopeça ou fornecedor",
+            placeholder="Digite parte do nome (ex.: Krambeck, Jota, Placar)...",
+            help="Pesquisa em toda a base de parceiros, independentemente da cidade selecionada.",
+            key="supplier_name_search",
+            label_visibility="collapsed",
+        )
+    with supplier_clear_col:
+        st.button(
+            "Limpar",
+            key="clear_supplier_name_search",
+            on_click=clear_supplier_search,
+            use_container_width=True,
+            help="Limpar a pesquisa por fornecedor",
+        )
+
+    if str(supplier_search_query or "").strip():
+        supplier_matches = search_suppliers_by_name(partners, supplier_search_query)
+        if supplier_matches.empty:
+            st.info(f'Nenhum fornecedor encontrado para "{html.escape(str(supplier_search_query))}". Confira a grafia ou tente apenas uma parte do nome.')
+        else:
+            supplier_matches = ensure_premium_column(ensure_supplier_key_column(supplier_matches))
+            supplier_matches["media_avaliacao"] = supplier_matches["supplier_key"].map(
+                lambda key: rating_summary.get(str(key), {}).get("average_rating", 0.0)
+            )
+            supplier_matches["total_avaliacoes"] = supplier_matches["supplier_key"].map(
+                lambda key: rating_summary.get(str(key), {}).get("rating_count", 0)
+            )
+            supplier_matches = supplier_matches.sort_values(
+                ["is_premium", "media_avaliacao", "Cidade", "Nome"],
+                ascending=[False, False, True, True],
+                kind="stable",
+            ).reset_index(drop=True)
+            # Explicita a UF no cartão da busca global, pois pode haver cidades homônimas.
+            supplier_matches["Cidade"] = supplier_matches.apply(
+                lambda row: (
+                    f"{row.get('Cidade', '')} - {normalize_state(row.get('UF provável pelo DDD', ''))}"
+                    if normalize_state(row.get('UF provável pelo DDD', "")) else str(row.get("Cidade", ""))
+                ),
+                axis=1,
+            )
+            st.caption(f'{len(supplier_matches)} resultado(s) para "{supplier_search_query.strip()}". Os contatos aparecem abaixo.')
+            visible_matches = supplier_matches.head(5)
+            for _, supplier_row in visible_matches.iterrows():
+                render_contact_card(
+                    supplier_row,
+                    show_distance=False,
+                    rating_summary=rating_summary,
+                    supabase_client=supabase_client,
+                    user=logged_user,
+                    own_ratings=own_ratings,
+                    ratings_ready=ratings_ready,
+                    login_available=supabase_configured,
+                )
+            remaining_matches = supplier_matches.iloc[5:]
+            if not remaining_matches.empty:
+                with st.expander(f"Ver os outros {len(remaining_matches)} fornecedores encontrados"):
+                    for _, supplier_row in remaining_matches.iterrows():
+                        render_contact_card(
+                            supplier_row,
+                            show_distance=False,
+                            rating_summary=rating_summary,
+                            supabase_client=supabase_client,
+                            user=logged_user,
+                            own_ratings=own_ratings,
+                            ratings_ready=ratings_ready,
+                            login_available=supabase_configured,
+                        )
+
 with cards_col:
     if overview_mode:
         st.markdown("### Fornecedores premium")

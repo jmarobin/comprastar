@@ -68,3 +68,10 @@ Não há migração SQL nem alteração dos Secrets para esta atualização.
 - A pesquisa por fornecedor aparece antes da pesquisa por cidade.
 - Os títulos de seção usam um padrão consistente de tamanho, peso, cor e espaçamento.
 - A sessão de gestão é fechada ao sair ou quando um usuário sem perfil de gestor entra.
+
+## Versão 25 — organização das pesquisas
+
+A pesquisa por fornecedor fica agora abaixo do mapa, na coluna esquerda, aproveitando o espaço livre. Ela continua consultando toda a base, independentemente da cidade e do raio. A parte superior fica dedicada à busca por cidade; o rótulo “Cidade de referência” foi ocultado para deixar a interface mais limpa.
+
+Para atualizar, substitua os arquivos do GitHub pelos arquivos deste ZIP. Esta alteração de layout não exige novo SQL nem mudanças nos Secrets do Supabase.
+Veja também `CHANGELOG_v25.md`.
