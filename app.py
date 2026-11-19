@@ -63,6 +63,11 @@ st.markdown(
       .hero-copy h1 {{font-size:1.85rem; line-height:1.2; margin:0 0 .4rem 0; color:#f8fafc; letter-spacing:-.025em;}}
       .hero-copy p {{margin:0; color:#c2d2e5; font-size:1rem;}}
       .hero-accent {{width:46px; height:4px; margin-top:.9rem; border-radius:99px; background:linear-gradient(90deg,#ff315e,#ff8617);}}
+      div[data-testid="stMarkdownContainer"] h3 {{font-size:1.28rem !important; line-height:1.3 !important; font-weight:780 !important; color:#f4f7fb !important; letter-spacing:-.018em !important; margin:1.35rem 0 .55rem !important;}}
+      div[data-testid="stMarkdownContainer"] h4 {{font-size:1.08rem !important; line-height:1.3 !important; font-weight:740 !important; color:#eaf1f9 !important; margin:1rem 0 .45rem !important;}}
+      div[data-testid="stCaptionContainer"] {{color:#9fb1c7 !important;}}
+      div.st-key-header_manager_toggle button {{background:#102844 !important; color:#fff !important; border:1px solid #ff8a1c !important; border-radius:10px !important; min-height:46px !important; font-weight:800 !important; white-space:nowrap !important;}}
+      div.st-key-header_manager_toggle button:hover {{background:#193b5f !important; border-color:#ffb15b !important;}}
       div.st-key-home_logo button {{display:block !important; min-height:158px !important; height:158px !important; width:168px !important; max-width:100%; padding:0 !important; margin:0 !important; background:transparent url("data:image/png;base64,{LOGO_B64}") center center / contain no-repeat !important; border:0 !important; box-shadow:none !important; color:transparent !important; border-radius:10px !important; cursor:pointer !important;}}
       div.st-key-home_logo button p {{visibility:hidden !important; color:transparent !important;}}
       div.st-key-home_logo button:hover {{transform:translateY(-1px); filter:drop-shadow(0 4px 11px rgba(255,134,23,.20)); background-color:transparent !important;}}
@@ -99,15 +104,21 @@ st.markdown(
       div[data-testid="stExpander"] {{border-color:#243955; border-radius:12px;}}
       .app-footer {{margin-top:2rem; padding:1rem 0 .35rem; text-align:center; color:#8295ad; font-size:.82rem; border-top:1px solid #20324a;}}
       .app-footer strong {{color:#ff8a1c; font-weight:750; letter-spacing:.05em;}}
-      @media (max-width:900px) {{.st-key-hero_header {{padding:1rem 1.1rem; min-height:0;}} div.st-key-home_logo button {{width:145px !important; min-height:136px !important; height:136px !important;}} .hero-copy h1 {{font-size:1.55rem;}}}}
-      @media (max-width:650px) {{.st-key-hero_header {{padding:.85rem;}} .st-key-hero_header [data-testid="stHorizontalBlock"] {{gap:.4rem;}} div.st-key-home_logo button {{width:112px !important; min-height:106px !important; height:106px !important;}} .hero-copy h1 {{font-size:1.2rem;}} .hero-copy p {{font-size:.82rem; line-height:1.35;}} .hero-accent {{margin-top:.6rem;}}}}
+      @media (max-width:900px) {{.st-key-hero_header {{padding:1rem 1.1rem; min-height:0;}} div.st-key-home_logo button {{width:145px !important; min-height:136px !important; height:136px !important;}} .hero-copy h1 {{font-size:1.55rem;}} div.st-key-header_manager_toggle button {{font-size:.82rem !important; padding:.35rem .45rem !important;}}}}
+      @media (max-width:650px) {{.st-key-hero_header {{padding:.85rem;}} .st-key-hero_header [data-testid="stHorizontalBlock"] {{gap:.4rem; flex-wrap:wrap;}} div.st-key-home_logo button {{width:105px !important; min-height:100px !important; height:100px !important;}} .hero-copy h1 {{font-size:1.15rem;}} .hero-copy p {{font-size:.8rem; line-height:1.35;}} .hero-accent {{margin-top:.6rem;}} div.st-key-header_manager_toggle button {{font-size:.76rem !important; min-height:40px !important;}}}}
     </style>
     """,
     unsafe_allow_html=True,
 )
 
+st.session_state.setdefault("manager_panel_open", False)
+header_user_email = str(st.session_state.get("sb_user_email", "") or "").strip().casefold()
+header_is_manager = header_user_email in MANAGER_EMAILS
+if not header_is_manager:
+    st.session_state["manager_panel_open"] = False
+
 with st.container(key="hero_header"):
-    logo_col, copy_col = st.columns([0.9, 4.1], gap="large", vertical_alignment="center")
+    logo_col, copy_col, manager_col = st.columns([0.86, 4.0, 1.0], gap="large", vertical_alignment="center")
     with logo_col:
         if LOGO_B64:
             home_clicked = st.button(" ", key="home_logo", help="Voltar à página inicial", type="secondary")
@@ -121,6 +132,17 @@ with st.container(key="hero_header"):
             '<div class="hero-accent"></div></div>',
             unsafe_allow_html=True,
         )
+    with manager_col:
+        if header_is_manager:
+            manager_label = "⚙ Gestão" if not st.session_state.get("manager_panel_open", False) else "✕ Fechar gestão"
+            if st.button(
+                manager_label,
+                key="header_manager_toggle",
+                help="Abrir ou fechar o menu de gestão de parceiros",
+                use_container_width=True,
+                type="secondary",
+            ):
+                st.session_state["manager_panel_open"] = not bool(st.session_state.get("manager_panel_open", False))
 
 if home_clicked:
     # Limpa as pesquisas por cidade e fornecedor; mantém a sessão autenticada ativa.
@@ -959,7 +981,10 @@ def get_allowed_emails() -> set[str]:
 
 
 def clear_login_state() -> None:
-    for state_key in ("sb_access_token", "sb_refresh_token", "sb_user_email", "sb_user_id"):
+    for state_key in (
+        "sb_access_token", "sb_refresh_token", "sb_user_email", "sb_user_id",
+        "manager_panel_open",
+    ):
         st.session_state.pop(state_key, None)
 
 
@@ -1129,8 +1154,17 @@ def render_manager_supplier_form(
     email = (getattr(user, "email", "") or "").strip().casefold()
     if email not in MANAGER_EMAILS:
         return
+    if not st.session_state.get("manager_panel_open", False):
+        return
 
-    with st.expander("🛠️ Gestão de parceiros", expanded=False):
+    with st.container(border=True):
+        manager_title_col, manager_close_col = st.columns([5, 1], vertical_alignment="center")
+        with manager_title_col:
+            st.markdown("### Gestão de parceiros")
+        with manager_close_col:
+            if st.button("Fechar", key="manager_panel_close", use_container_width=True):
+                st.session_state["manager_panel_open"] = False
+                st.rerun()
         st.caption("Área exclusiva para gestores. Cadastros e classificações são salvos no Supabase e compartilhados com a equipe.")
 
         mode = st.radio(
@@ -1492,28 +1526,10 @@ render_manager_supplier_form(
 if (getattr(logged_user, "email", "") or "").strip().casefold() in MANAGER_EMAILS and (not supplier_directory_ready or not premium_overrides_ready or not profile_overrides_ready):
     st.caption("Para habilitar todos os recursos de gestão, execute `supabase/add_supplier_directory.sql` e `supabase/add_supplier_profile_editing.sql` no SQL Editor do Supabase.")
 
-form_left, form_right = st.columns([4, 1])
-with form_left:
-    city_options = sorted(set(CITY_LABELS.values()), key=lambda value: value.casefold())
-    city_query = st.selectbox(
-        "Cidade de referência",
-        options=city_options,
-        index=None,
-        placeholder="Digite uma cidade… (ex.: Itajaí)",
-        accept_new_options=True,
-        filter_mode="fuzzy",
-        help="Catálogo completo de municípios do PR, RS e SC. Digite a cidade e pressione Enter; nomes iguais aparecem com a UF para você escolher corretamente.",
-        key="city_autocomplete",
-        on_change=on_city_commit,
-    )
-with form_right:
-    radius = st.slider("Raio de busca (km)", min_value=25, max_value=100, value=25, step=25, key="search_radius")
-
-submitted = st.button("Buscar parceiros próximos", use_container_width=True)
-
+st.markdown("### Pesquisa por fornecedor")
+st.caption("Localize uma autopeça pelo nome e consulte seus contatos, independentemente da cidade.")
 # Busca direta por fornecedor: independente da cidade e do raio selecionados.
 # A caixa fica acima do mapa para o comprador localizar o contato pelo nome.
-st.markdown("#### Pesquisa por fornecedor")
 supplier_search_col, supplier_clear_col = st.columns([5, 1], gap="small", vertical_alignment="bottom")
 with supplier_search_col:
     supplier_search_query = st.text_input(
@@ -1587,6 +1603,27 @@ if str(supplier_search_query or "").strip():
                         login_available=supabase_configured,
                     )
 
+
+st.markdown("### Pesquisa por cidade")
+st.caption("Digite o município e pressione Enter para localizar parceiros próximos.")
+form_left, form_right = st.columns([4, 1])
+with form_left:
+    city_options = sorted(set(CITY_LABELS.values()), key=lambda value: value.casefold())
+    city_query = st.selectbox(
+        "Cidade de referência",
+        options=city_options,
+        index=None,
+        placeholder="Digite uma cidade… (ex.: Itajaí)",
+        accept_new_options=True,
+        filter_mode="fuzzy",
+        help="Catálogo completo de municípios do PR, RS e SC. Digite a cidade e pressione Enter; nomes iguais aparecem com a UF para você escolher corretamente.",
+        key="city_autocomplete",
+        on_change=on_city_commit,
+    )
+with form_right:
+    radius = st.slider("Raio de busca (km)", min_value=25, max_value=100, value=25, step=25, key="search_radius")
+
+submitted = st.button("Buscar parceiros próximos", use_container_width=True)
 city_changed = bool(
     city_query and city_query.strip()
     and city_query.strip() != st.session_state.get("last_searched_input", "")
@@ -1813,11 +1850,11 @@ with map_col:
     st_folium(m, use_container_width=True, height=610, returned_objects=[])
 with cards_col:
     if overview_mode:
-        st.markdown("#### Fornecedores premium")
+        st.markdown("### Fornecedores premium")
         st.caption("A lista inicial destaca apenas parceiros premium. O mapa mostra todos os fornecedores cadastrados.")
         cards_to_show = nearby[nearby["is_premium"].astype(bool)].head(5)
     else:
-        st.markdown("#### Contatos da região")
+        st.markdown("### Contatos da região")
         st.caption("Clique em um marcador no mapa ou navegue pelos cartões para consultar contatos e avaliações.")
         cards_to_show = nearby.head(8)
     if nearby.empty:

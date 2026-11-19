@@ -50,3 +50,21 @@ Foi adicionada uma caixa de pesquisa direta por nome do fornecedor, independente
 Os resultados mostram a cidade e a UF, telefones copiáveis, links de WhatsApp configurados, classificação Premium e média/quantidade de avaliações. Até oito fichas aparecem inicialmente; os demais resultados podem ser expandidos. A busca exige login, como o restante do CompraStar. Clicar na logo STAR limpa também essa pesquisa e volta à visão inicial.
 
 Não há migração SQL nem alteração dos Secrets para esta atualização.
+
+
+## Versão 24 — organização da tela inicial
+
+- Botão de Gestão no cabeçalho, visível apenas para gestores, que abre/fecha o painel de gestão no início da página.
+- Removido o expander de gestão da área inferior; o painel é controlado pelo botão do cabeçalho.
+- Pesquisa por fornecedor posicionada acima da pesquisa por cidade.
+- Títulos de seções padronizados em tamanho, peso, cor e espaçamento.
+- A descrição da área de gestão foi mantida exatamente como solicitado.
+
+
+## Versão 24 — layout reorganizado
+
+- O botão **Gestão** fica no cabeçalho ao lado do título e aparece somente para Maiki e João Marobin.
+- O botão abre/fecha o painel de gestão no início da área de trabalho; o antigo expander inferior foi removido.
+- A pesquisa por fornecedor aparece antes da pesquisa por cidade.
+- Os títulos de seção usam um padrão consistente de tamanho, peso, cor e espaçamento.
+- A sessão de gestão é fechada ao sair ou quando um usuário sem perfil de gestor entra.
